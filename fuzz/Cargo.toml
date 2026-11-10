@@ -1,0 +1,24 @@
+# The fuzz crate is deliberately outside the main workspace: stable `cargo test`
+# never builds it, and it needs the nightly toolchain, which runs only in CI
+# (D-022). Phase 2 replaces the `smoke` placeholder with the `vault_file` target.
+
+[package]
+name = "vaultline-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[[bin]]
+name = "smoke"
+path = "fuzz_targets/smoke.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
