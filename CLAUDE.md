@@ -1,6 +1,6 @@
 # Project 4: Rust secrets-injection CLI
 
-A Rust CLI that keeps secrets in an encrypted local vault and injects them into child processes or templates without writing plaintext to disk. Keys are layered: Argon2id derives a key from the passphrase, which unlocks a master key, which unlocks per-item keys. Items use XChaCha20-Poly1305 with the item ID as associated data. It includes an agent behind a Unix socket and a hash-chained audit log.
+A Rust CLI that keeps secrets in an encrypted local vault and injects them into child processes or templates without writing plaintext to disk. Keys are layered: Argon2id derives a key from the passphrase, which unlocks a master key, which unlocks per-item keys. Items use XChaCha20-Poly1305 with the format version, vault ID and item ID as associated data, and an HMAC covers the whole vault file (`docs/decisions.md` D-003). It includes an agent behind a Unix socket and a hash-chained audit log.
 
 ## Source of truth
 
@@ -14,7 +14,7 @@ I start every phase by name ("Start phase 3"). Never start a phase on your own.
 1. **Sync.** `git checkout main && git pull`. Check with `gh pr list` that no earlier phase PR is still open. Create the branch `phase-<N>-<short-name>`.
 2. **Read.** Read the phase in `docs/phases.md` and the docs it touches. If anything is ambiguous, missing or conflicts with the docs, ask me before writing code. Never invent requirements.
 3. **Build the whole phase.** Write the code, a test for every acceptance criterion, and any doc updates the phase lists. Use small, logical commits with clear messages.
-4. **Verify.** `make lint`, `make test` and `make audit` must pass, plus any check the phase names. Never skip, weaken or delete a test to get green; if a test is wrong, say so in the PR.
+4. **Verify.** `make lint` and `make test` must pass locally. cargo-deny, cargo-audit and the fuzz smoke run happen only in CI, so push the branch and make sure the CI Linux job passes before opening the PR (`docs/decisions.md` D-022). Any check the phase names must pass too. Never skip, weaken or delete a test to get green; if a test is wrong, say so in the PR.
 5. **Self-review.** Review `git diff main...HEAD` as a senior security engineer would. Check secret handling, crypto misuse, panics on untrusted input, a test for each behaviour, and needless complexity. Fix what you find.
 6. **Open the PR.** Push, then run `gh pr create` and fill in every section of `.github/pull_request_template.md`.
 7. **Stop.** Send me the PR link and wait.
@@ -60,7 +60,7 @@ If the design turns out to be wrong or a requirement can't be met, stop. Explain
 ## Invariants the tests must enforce
 
 1. Seal then open returns the original bytes.
-2. Any changed byte in the vault gives an authentication error, never wrong plaintext or a panic.
+2. Any changed byte in the vault is rejected with a format or authentication error, never wrong plaintext or a panic (`docs/decisions.md` D-002).
 3. An item's ciphertext moved to another item's slot fails to open.
 4. A wrong passphrase gives a clean error.
 5. Format v1 fixtures always open with their known plaintexts.
