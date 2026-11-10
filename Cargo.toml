@@ -1,0 +1,21 @@
+[package]
+name = "vaultline"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.86"
+description = "An encrypted local vault that injects secrets into child processes and templates without writing plaintext to disk."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/jenishmsoni45/vaultline"
+readme = "README.md"
+publish = false
+
+[lib]
+name = "vaultline"
+path = "src/lib.rs"
+
+[[bin]]
+name = "vaultline"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }

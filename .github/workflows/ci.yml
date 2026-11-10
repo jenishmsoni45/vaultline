@@ -1,0 +1,84 @@
+# CI for vaultline (docs/design.md section 12.6, D-018, D-021, D-022, D-032).
+#
+# - Linux runs on every push. It is the only job that runs cargo-deny,
+#   cargo-audit and the fuzz smoke test, because none of them are installed on
+#   the developer Mac.
+# - macOS runs on pull requests only, because macOS minutes cost the most.
+# - Rust 1.86 builds, lints and tests. Nightly is installed only for cargo-fuzz.
+# - Every action is pinned to a commit SHA. The token is read-only.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_VERSION: "1.86"
+
+jobs:
+  linux:
+    name: Linux
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt --component clippy
+          rustup default "$RUST_VERSION"
+          rustc --version
+
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test
+
+      - name: Install cargo-deny and cargo-audit
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-deny@0.20.2,cargo-audit@0.22.2
+
+      - name: Audit dependencies
+        run: make audit
+
+      - name: Install nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install --locked cargo-fuzz@0.13.2
+
+      - name: Fuzz smoke test
+        run: make fuzz
+
+  macos:
+    name: macOS
+    if: github.event_name == 'pull_request'
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust ${{ env.RUST_VERSION }}
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt --component clippy
+          rustup default "$RUST_VERSION"
+          rustc --version
+
+      - name: Lint
+        run: make lint
+
+      - name: Test
+        run: make test
