@@ -119,7 +119,6 @@ enum Command {
 }
 
 #[derive(Subcommand)]
-#[allow(dead_code)]
 enum AgentCommand {
     /// Wipe the key, remove the socket and exit
     Stop,
