@@ -7,3 +7,8 @@
 
 # OS
 .DS_Store
+
+# Rust
+target/
+fuzz/target/
+fuzz/artifacts/
