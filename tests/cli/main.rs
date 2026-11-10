@@ -3,3 +3,4 @@
 
 mod makefile;
 mod scaffold;
+mod workflows;
