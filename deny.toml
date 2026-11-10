@@ -1,0 +1,51 @@
+# cargo-deny policy for vaultline (docs/phases.md Phase 1, NFR-6, D-022).
+# It runs only in CI: `cargo deny check`, through `make audit`.
+
+[graph]
+all-features = true
+
+[advisories]
+# Known vulnerabilities, unsound and unmaintained crates fail the check.
+# An ignore needs an advisory ID and a reason, and a review in the PR.
+ignore = []
+
+[licenses]
+# Allowlist. A new crate whose license is not listed fails CI, which makes the
+# PR that adds the crate justify the license too.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Unicode-3.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# vaultline never opens a network connection (NFR-6), so networking and async
+# runtime crates are banned. This catches a dependency that pulls one in.
+deny = [
+    { crate = "reqwest", reason = "NFR-6: no network access" },
+    { crate = "hyper", reason = "NFR-6: no network access" },
+    { crate = "h2", reason = "NFR-6: no network access" },
+    { crate = "ureq", reason = "NFR-6: no network access" },
+    { crate = "isahc", reason = "NFR-6: no network access" },
+    { crate = "surf", reason = "NFR-6: no network access" },
+    { crate = "attohttpc", reason = "NFR-6: no network access" },
+    { crate = "curl", reason = "NFR-6: no network access" },
+    { crate = "curl-sys", reason = "NFR-6: no network access" },
+    { crate = "openssl", reason = "NFR-6: no network access" },
+    { crate = "openssl-sys", reason = "NFR-6: no network access" },
+    { crate = "native-tls", reason = "NFR-6: no network access" },
+    { crate = "rustls", reason = "NFR-6: no network access" },
+    { crate = "socket2", reason = "NFR-6: no network access" },
+    { crate = "tokio", reason = "NFR-6: no network access, and no async runtime (design.md section 13)" },
+    { crate = "async-std", reason = "NFR-6: no network access, and no async runtime (design.md section 13)" },
+    { crate = "smol", reason = "NFR-6: no network access, and no async runtime (design.md section 13)" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
