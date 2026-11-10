@@ -114,6 +114,8 @@ Phases 1–5, one PR each, started by the owner by name ("Start phase N"). For e
 | P2-15 | `make bench` prints the measured unlock time. If it is over 1 s on the developer Mac, stop and raise it (D-001). |
 | P2-16 | The `vault_file` fuzz target runs its 60 s CI smoke without a crash. |
 
+US-9 AC1–4 (`requirements.md`) are covered by P2-2 and P2-3 (AC1), P2-5 (AC2), P2-14 (AC3) and P2-13 (AC4). NFR-12 and NFR-13 are covered by P2-10 and P2-11.
+
 **Tests to add:**
 - `tests/invariants/s1_roundtrip.rs`, `s2_tamper.rs`, `s3_swap.rs`, `s4_wrong_passphrase.rs`, `s5_fixtures.rs`;
 - `tests/adversarial/no_plaintext_in_vault.rs`, `versions.rs`, `kdf_bounds.rs`, `limits.rs`, `atomic_write.rs`, `concurrency.rs`, `permissions.rs`, `secret_types.rs`;
