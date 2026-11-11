@@ -269,6 +269,7 @@ The owner asked twice that nothing done for this project cause problems on their
 - **Resources:** Tests use cheap Argon2 parameters, so the suite stays light on memory and CPU. The real 256 MiB parameters are used only during a real unlock, by one `init` test, by one fixture test, and by `make bench`. `make bench` runs only when asked for and finishes quickly.
 - **Settings:** Hardening settings (D-017) apply only to the tool's own processes. No system setting is changed.
 - **Heavy work:** The fuzz campaign and the Linux test runs happen on GitHub's servers. Local fuzzing is a short smoke run at most.
+- **Amended:** D-040 adds one `passwd` test and one `rotate` test per phase to the tests that use the 256 MiB parameters.
 
 ### D-021 · Supported operating systems (PLAN §5.9)
 
@@ -461,3 +462,59 @@ None of these change an answer above. Each fills in a detail the answers left op
 - **Not using `serde`:** `serde`, from PLAN's stack, isn't used. Both formats and the wire protocol are specified by hand.
 - **Argon2 lane parallelism:** the `argon2` crate computes its lanes one after another unless its `parallel` feature (which uses `rayon`) is on. Phase 2 measures unlock time first. If the target is missed, that feature is one option to raise (D-001).
 
+## Phase 2: crypto core and vault format
+
+### D-038 · RustCrypto crate generation and the OS random generator (Phase 2)
+
+- **Question:** Two generations of the RustCrypto crates build with Rust 1.86. The docs said randomness comes from `getrandom` through `rand_core::OsRng`, but the current `rand_core` (0.10) no longer has `OsRng`. Which generation should vaultline use, and how does it reach the OS generator?
+- **Options:**
+  - A: the current generation (`argon2` 0.6, `chacha20poly1305` 0.11, `hkdf` and `hmac` 0.13, `sha2` 0.11), calling the OS generator directly with `getrandom::fill` (`getrandom` 0.4).
+  - B: the previous generation (`argon2` 0.5, `chacha20poly1305` 0.10, `hkdf` and `hmac` 0.12, `sha2` 0.10), with `rand_core` 0.6 and its `OsRng`, as the docs said.
+- **Decision:** A.
+- **Why:** It is the maintained line, it is already widely used, and fixes land there first. The algorithms are the same, so the format doesn't change.
+- **Doc changes (approved):** `vault-format.md` §2 and `design.md` §13 name `getrandom` as the source of keys, salts, nonces and IDs, and `phases.md` Phase 2 says "randomness from `getrandom` only". `rand_core` is not a dependency.
+
+### D-039 · Secret types and `Debug` (corrects `design.md` §10)
+
+- **Question:** `design.md` §10 said `SecretString`, `SecretBox<[u8]>` and `Zeroizing<[u8; 32]>` implement neither Debug nor Display. They do: secrecy's types print `[REDACTED]`, and `Zeroizing<[u8; 32]>` prints the raw bytes. How should the sentence be handled?
+- **Options:**
+  - A: fix the sentence. The library types are used only inside the wrappers in `src/secret.rs`, and the wrappers implement neither trait.
+  - B: leave the doc as it is.
+- **Decision:** A.
+- **Design:** `Key`, `Passphrase`, `SecretValue` and `SecretBytes` in `src/secret.rs` hold the library types and implement neither trait. So do the types that hold them (`Vault`, `Item`, `Payload`, `Subkeys`). `tests/adversarial/secret_types.rs` checks every one with `static_assertions`.
+- **Doc change (approved):** the "Secret types" bullet in `design.md` §10.
+
+### D-040 · Tests that run Argon2id at the default parameters (amends D-020)
+
+- **Question:** D-020 lists one `init` test, one fixture test and `make bench` as the only users of the 256 MiB parameters. But `passwd` and `rotate` always write the default parameters (`vault-format.md` §4.8), and P2-6 checks that, so any test that calls them runs Argon2id at 256 MiB. How should Phase 2, and later Phase 3's CLI tests, handle this?
+- **Options:**
+  - A: `passwd` and `rotate` have no parameter override. Each phase that tests them adds one `passwd` test and one `rotate` test at the real parameters, run one at a time.
+  - B: a test-only parameter override keeps most tests cheap, with one test each at the defaults.
+- **Decision:** A.
+- **Why:** No code path exists, not even one compiled only for tests, that could make `passwd` or `rotate` write weaker parameters.
+- **Effect on D-020:** the 256 MiB parameters are also used by one `passwd` test and one `rotate` test in Phase 2 (`src/vault/tests.rs`) and in Phase 3 (the CLI). They take a lock, so they never run at the same time.
+- **Local runs:** the owner agreed that Claude runs `make bench` once on the developer Mac in Phase 2, for P2-15.
+- **Doc change (approved):** the "Cheap parameters" bullet in `design.md` §12.2.
+
+### D-041 · Files in the vault directory are checked too (threat model C13)
+
+- **Question:** `threat-model.md` C13 says the directory and the files are private to the user and vaultline refuses to use them otherwise. P2-10 only says files are created with mode 0600 and a bad directory is refused. Should files be checked as well?
+- **Options:**
+  - A: also refuse a vault or lock file that is a symlink, isn't a regular file, is owned by another user, or gives group or others any access.
+  - B: check the directory only.
+- **Decision:** A.
+- **Design:** files are opened with `O_NOFOLLOW` and checked through their own descriptor (`fstat`), so the check applies to exactly the file that is read or locked. A refusal prints the `chmod` or `chown` that fixes it, as for the directory (`design.md` §11). Tested in `tests/adversarial/permissions.rs`.
+
+### D-042 · What P2-13 checks
+
+- **Question:** P2-13 says no name or value from the fixtures or from proptest-generated vaults appears in the vault bytes. Strings of 1 to 7 bytes, such as a 1-byte name or the empty value, turn up in random ciphertext by chance, so they can't be checked. What does the test check?
+- **Options:**
+  - A: every name and value of 8 bytes or more. The proptest generator for this test makes distinctive `fake-…` markers of 8 bytes or more. The fixtures keep their short names, a useful edge case, and those are skipped.
+  - B: make every fixture and generated name and value 8 bytes or more, so nothing is skipped.
+- **Decision:** A. The test's documentation states the limit.
+
+### D-043 · Argon2id's working memory (implementation note; no doc change)
+
+- **Found while wiring Argon2id:** in `argon2` 0.6, the allocating `hash_password_into` frees its working memory without wiping it, even with the `zeroize` feature. That feature only wipes the initial and final hashes. `design.md` §10 says the working memory is wiped.
+- **Implementation:** `vault::crypto::derive_kek` allocates the memory blocks itself, in a `Zeroizing<Vec<Block>>`, and passes them to `hash_password_into_with_memory`, so they are wiped before they are freed. The statement in `design.md` §10 holds, so no doc change is needed.
+- **Related:** `hmac` and `sha2` are built with their `zeroize` features, so HMAC and SHA-256 states are wiped on drop.

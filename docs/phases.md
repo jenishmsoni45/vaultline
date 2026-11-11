@@ -76,7 +76,7 @@ Phases 1–5, one PR each, started by the owner by name ("Start phase N"). For e
   - HKDF subkeys;
   - XChaCha20-Poly1305 seal and open, with builders for the associated data;
   - the file MAC;
-  - randomness from `OsRng` only.
+  - randomness from `getrandom` only (D-038).
 - **`vault/format.rs`:** the v1 encoder and decoder (§4.1–4.4), the verification order (§4.7) and canonical writes (§4.8). The module denies `unwrap`, `expect`, indexing, `panic` and unchecked arithmetic.
 - **`vault/mod.rs` (library API):**
   - `create` with given parameters, used by tests. The CLI's `init` will always use the defaults;
