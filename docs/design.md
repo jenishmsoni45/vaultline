@@ -321,7 +321,7 @@ Every crate is well known and pinned in `Cargo.lock`, and each one is justified 
 | `argon2` (with `zeroize`) | KEK derivation |
 | `chacha20poly1305` | XChaCha20-Poly1305 |
 | `hkdf`, `hmac`, `sha2` | subkeys, file MAC, audit MACs, chain |
-| `getrandom` | OS CSPRNG: keys, salts, nonces, IDs (D-038) |
+| `rand_core` (`getrandom`) | OS CSPRNG |
 | `zeroize`, `secrecy` | secret types |
 | `clap` | command line |
 | `nix` | peer credentials, `flock`, `poll`, `setrlimit`, `prctl`, `fstat`, `kill`, umask |

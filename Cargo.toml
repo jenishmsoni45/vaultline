@@ -24,19 +24,15 @@ path = "src/main.rs"
 test-support = []
 
 [dependencies]
-argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
-# Not called directly: turns on BLAKE2b's `zeroize` feature, which argon2's own
-# `zeroize` feature leaves off, so the hash states Argon2id feeds the passphrase
-# through are wiped on drop (D-043).
-blake2 = { version = "0.11", default-features = false, features = ["zeroize"] }
-chacha20poly1305 = { version = "0.11", default-features = false, features = ["zeroize"] }
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "0.10", default-features = false }
 clap = { version = "4", features = ["derive"] }
-getrandom = "0.4"
-hkdf = "0.13"
-hmac = { version = "0.13", features = ["zeroize"] }
+hkdf = "0.12"
+hmac = "0.12"
 nix = { version = "0.31", default-features = false, features = ["fs", "user"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
 secrecy = "0.10"
-sha2 = { version = "0.11", default-features = false, features = ["zeroize"] }
+sha2 = { version = "0.10", default-features = false }
 zeroize = "1"
 
 [dev-dependencies]

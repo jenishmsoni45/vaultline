@@ -21,7 +21,7 @@ This document defines the on-disk formats of vaultline v1, byte by byte: the vau
 | Subkeys from the master key | HKDF-SHA-256 | `hkdf`, `sha2` |
 | File MAC, audit MACs | HMAC-SHA-256, verified in constant time | `hmac`, `sha2` |
 | Audit hash chain | SHA-256 | `sha2` |
-| Keys, salts, nonces, IDs | OS CSPRNG | `getrandom` (`getrandom::fill`) |
+| Keys, salts, nonces, IDs | OS CSPRNG | `getrandom` through `rand_core::OsRng` |
 
 Every nonce is 24 fresh random bytes, generated for each encryption. No nonce is derived, counted or reused on purpose.
 

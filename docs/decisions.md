@@ -473,6 +473,7 @@ None of these change an answer above. Each fills in a detail the answers left op
 - **Decision:** A.
 - **Why:** It is the maintained line, it is already widely used, and fixes land there first. The algorithms are the same, so the format doesn't change.
 - **Doc changes (approved):** `vault-format.md` §2 and `design.md` §13 name `getrandom` as the source of keys, salts, nonces and IDs, and `phases.md` Phase 2 says "randomness from `getrandom` only". `rand_core` is not a dependency.
+- **Superseded:** D-044 reverses this decision and undoes these doc changes. CI found RUSTSEC-2026-0385 in `ctutils`, which this generation depends on, and every fixed release needs Rust 1.87.
 
 ### D-039 · Secret types and `Debug` (corrects `design.md` §10)
 
@@ -515,6 +516,19 @@ None of these change an answer above. Each fills in a detail the answers left op
 
 ### D-043 · Argon2id's working memory (implementation note; no doc change)
 
-- **Found while wiring Argon2id:** in `argon2` 0.6, the allocating `hash_password_into` frees its working memory without wiping it, even with the `zeroize` feature. That feature only wipes the initial and final hashes. `design.md` §10 says the working memory is wiped.
+- **Found while wiring Argon2id:** in `argon2` (0.5 and 0.6 alike), the allocating `hash_password_into` frees its working memory without wiping it, even with the `zeroize` feature. That feature only wipes the initial and final hashes. `design.md` §10 says the working memory is wiped.
 - **Implementation:** `vault::crypto::derive_kek` allocates the memory blocks itself, in a `Zeroizing<Vec<Block>>`, and passes them to `hash_password_into_with_memory`, so they are wiped before they are freed. The statement in `design.md` §10 holds, so no doc change is needed.
-- **Related:** `hmac` and `sha2` are built with their `zeroize` features, so HMAC and SHA-256 states are wiped on drop. `argon2`'s `zeroize` feature doesn't turn on `blake2`'s, so `blake2` is listed as a direct dependency only to turn its `zeroize` feature on; the BLAKE2b states that Argon2id feeds the passphrase through are then wiped as well.
+- **Related:** with the crates chosen in D-044, `sha2` 0.10, `hmac` 0.12 and `blake2` 0.10 have no `zeroize` feature. Their internal states, including the BLAKE2b state that absorbs the passphrase inside Argon2id and the HMAC states keyed with the master key and subkeys, are not wiped when dropped. Like the copies listed in `threat-model.md` R6, these are copies vaultline can't reach. `chacha20poly1305` 0.10 does wipe its copy of the key on drop.
+
+### D-044 · Back to the previous RustCrypto generation (supersedes D-038)
+
+- **Question:** CI's cargo-deny run failed on RUSTSEC-2026-0385: `ctutils` 0.4.2 could compile its constant-time masks and comparisons into branches. The current generation (D-038) uses `ctutils` for the HMAC tag check and the Poly1305 tag check. Every fixed release (0.4.4 and later) needs Rust 1.87, but the project pins 1.86 and nothing may be installed on the developer Mac (NFR-15, D-020, D-022). How should it be resolved?
+- **Options:**
+  - A: the previous generation (`argon2` 0.5, `chacha20poly1305` 0.10, `hkdf` and `hmac` 0.12, `sha2` 0.10, `rand_core` 0.6 with `OsRng`), which was D-038's option B. It uses `subtle` for constant-time comparisons and has no open advisories at its latest patch releases.
+  - B: move to Rust 1.87, installed by the owner, which changes NFR-15 and D-022.
+  - C: ignore the advisory in `deny.toml`, arguing that a local vault file offers no timing oracle.
+- **Decision:** A.
+- **Why:** It keeps Rust 1.86, installs nothing and ships no known constant-time bug. The algorithms are the same, so the format doesn't change. The v1 fixtures, written with the current generation, open unchanged with the previous one, which also cross-checks the two implementations.
+- **Doc changes (approved):** the D-038 edits are undone. `vault-format.md` §2, `design.md` §13 and `phases.md` again say randomness comes from `getrandom` through `rand_core::OsRng`.
+- **Cost:** `sha2`, `hmac` and `blake2` in this generation have no `zeroize` feature, so their internal states aren't wiped on drop (D-043).
+- **Later:** once the project moves past Rust 1.86, the current generation, with a fixed `ctutils`, can come back as a plain dependency upgrade, with no format change.

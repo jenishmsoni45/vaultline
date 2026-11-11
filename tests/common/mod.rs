@@ -10,6 +10,7 @@ use std::fs::{self, Permissions};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use rand_core::{OsRng, RngCore};
 use tempfile::TempDir;
 use vaultline::secret::{Passphrase, SecretValue};
 use vaultline::vault::{Error, KdfParams, Name, Vault};
@@ -37,7 +38,7 @@ pub fn value(bytes: &[u8]) -> SecretValue {
 /// by chance, and is obviously not a real secret.
 pub fn marker(tag: &str) -> String {
     let mut bytes = [0u8; 8];
-    getrandom::fill(&mut bytes).expect("random bytes");
+    OsRng.fill_bytes(&mut bytes);
     let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
     format!("fake-{tag}-{hex}")
 }

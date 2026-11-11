@@ -15,10 +15,11 @@
 )]
 
 use argon2::{Algorithm, Argon2, Block, Params, Version};
-use chacha20poly1305::aead::{AeadInOut, KeyInit};
+use chacha20poly1305::aead::{AeadInPlace, KeyInit};
 use chacha20poly1305::{Tag, XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
+use rand_core::{OsRng, RngCore};
 use sha2::Sha256;
 use zeroize::Zeroizing;
 
@@ -111,7 +112,9 @@ impl KdfParams {
 /// `N` bytes from the OS random number generator, for IDs, salts and nonces.
 pub fn random_array<const N: usize>() -> Result<[u8; N], CryptoError> {
     let mut bytes = [0u8; N];
-    getrandom::fill(&mut bytes).map_err(|_| CryptoError::Random)?;
+    OsRng
+        .try_fill_bytes(&mut bytes)
+        .map_err(|_| CryptoError::Random)?;
     Ok(bytes)
 }
 
@@ -186,7 +189,7 @@ pub fn seal(
     let mut buffer = SecretBytes::with_capacity(plaintext.len());
     buffer.extend_from_slice(plaintext);
     let tag = cipher
-        .encrypt_inout_detached(&XNonce::from(*nonce), aad, buffer.as_mut_slice().into())
+        .encrypt_in_place_detached(&XNonce::from(*nonce), aad, buffer.as_mut_slice())
         .map_err(|_| CryptoError::Aead)?;
     let len = plaintext
         .len()
@@ -207,17 +210,13 @@ pub fn open(
 ) -> Result<SecretBytes, CryptoError> {
     let ct_len = sealed.len().checked_sub(TAG_LEN).ok_or(CryptoError::Aead)?;
     let (ciphertext, tag) = sealed.split_at_checked(ct_len).ok_or(CryptoError::Aead)?;
-    let tag = Tag::try_from(tag).map_err(|_| CryptoError::Aead)?;
+    let tag: [u8; TAG_LEN] = tag.try_into().map_err(|_| CryptoError::Aead)?;
+    let tag = Tag::from(tag);
     let cipher = cipher(key)?;
     let mut buffer = SecretBytes::with_capacity(ct_len);
     buffer.extend_from_slice(ciphertext);
     cipher
-        .decrypt_inout_detached(
-            &XNonce::from(*nonce),
-            aad,
-            buffer.as_mut_slice().into(),
-            &tag,
-        )
+        .decrypt_in_place_detached(&XNonce::from(*nonce), aad, buffer.as_mut_slice(), &tag)
         .map_err(|_| CryptoError::Aead)?;
     Ok(buffer)
 }

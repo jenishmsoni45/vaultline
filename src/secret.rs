@@ -11,6 +11,7 @@
 //! Keys and values live on the heap behind `SecretBox`, so moving a wrapper
 //! moves a pointer and leaves no stray copy of the secret on the stack.
 
+use rand_core::{OsRng, RngCore};
 use secrecy::{ExposeSecret, ExposeSecretMut, SecretBox};
 use zeroize::Zeroizing;
 
@@ -22,9 +23,9 @@ pub struct Key(SecretBox<[u8; KEY_LEN]>);
 
 impl Key {
     /// A fresh key from the OS random number generator.
-    pub(crate) fn random() -> Result<Self, getrandom::Error> {
+    pub(crate) fn random() -> Result<Self, rand_core::Error> {
         let mut key = Self::zeroed();
-        getrandom::fill(key.as_mut_bytes())?;
+        OsRng.try_fill_bytes(key.as_mut_bytes())?;
         Ok(key)
     }
 
