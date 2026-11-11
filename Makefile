@@ -53,6 +53,8 @@ fuzz:
 		cargo +nightly fuzz run $$target -- -max_total_time=$(FUZZ_SECONDS) || exit 1; \
 	done
 
-# Benchmarks arrive in Phase 2 (unlock) and Phase 5 (run overhead).
+# Runs only when asked for. Prints the measured unlock time with the default
+# Argon2id parameters (P2-15); one process, 256 MiB, about ten seconds once
+# built. The run-overhead benchmark arrives in Phase 5.
 bench:
-	@echo "no benchmarks yet; the unlock benchmark arrives in Phase 2"
+	sh scripts/bench-unlock.sh
