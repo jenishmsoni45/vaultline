@@ -84,20 +84,37 @@ fn ci_pins_rust_1_86_and_uses_nightly_only_for_fuzzing() {
     assert!(read("Cargo.toml").contains("rust-version = \"1.86\""));
 }
 
+/// P1-7, updated by Phase 2: the `vault_file` target replaces the `smoke`
+/// placeholder (D-035, P2-16).
 #[test]
-fn fuzz_crate_is_outside_the_workspace_with_a_smoke_target() {
+fn fuzz_crate_is_outside_the_workspace_with_the_vault_file_target() {
     let manifest = read("fuzz/Cargo.toml");
     assert!(
         manifest.contains("\n[workspace]\n"),
         "fuzz/ must be its own workspace"
     );
-    assert!(manifest.contains("name = \"smoke\""));
-    assert!(!read("Cargo.toml").contains("[workspace]"));
+    assert!(manifest.contains("name = \"vault_file\""));
     assert!(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("fuzz/fuzz_targets/smoke.rs")
-            .is_file()
+        !manifest.contains("name = \"smoke\""),
+        "Phase 2 removes smoke"
     );
+    assert!(!read("Cargo.toml").contains("[workspace]"));
+    let targets = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/fuzz_targets");
+    assert!(targets.join("vault_file.rs").is_file());
+    assert!(!targets.join("smoke.rs").exists());
+}
+
+/// The tests that need another user's files run in CI only, where both jobs
+/// set `VAULTLINE_CI_SUDO=1` (docs/design.md section 12.2).
+#[test]
+fn both_ci_jobs_enable_the_sudo_tests() {
+    let ci = read(".github/workflows/ci.yml");
+    for name in ["linux", "macos"] {
+        assert!(
+            job(&ci, name).contains("VAULTLINE_CI_SUDO: \"1\""),
+            "the {name} job must set VAULTLINE_CI_SUDO"
+        );
+    }
 }
 
 #[test]

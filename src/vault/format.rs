@@ -896,6 +896,48 @@ mod tests {
         assert!(encode_payload(&payload(&[("big", &over)])).is_err());
     }
 
+    /// The property the `vault_file` fuzz target checks, run on stable as a
+    /// proptest too: the parsers never panic, and whatever they accept
+    /// encodes back to exactly the same bytes.
+    fn parsers_hold_up(data: &[u8]) {
+        if let (Ok(header), Ok(records)) = (parse_header(data), parse_records(data)) {
+            let body = encode_body(&header, &records).unwrap();
+            assert_eq!(body.as_slice(), &data[..data.len() - MAC_LEN]);
+        }
+        if let Ok(payload) = decode_payload(data) {
+            assert_eq!(encode_payload(&payload).unwrap().expose(), data);
+        }
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(2000))]
+
+        #[test]
+        fn parsers_never_panic_on_random_bytes(data in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..700)) {
+            parsers_hold_up(&data);
+        }
+
+        #[test]
+        fn parsers_never_panic_on_edited_vaults(
+            edits in proptest::collection::vec((proptest::prelude::any::<proptest::sample::Index>(), proptest::prelude::any::<u8>()), 0..6),
+            cut in proptest::prelude::any::<proptest::sample::Index>(),
+        ) {
+            let mut data = file(&header(), &[record(1, 16), record(2, 40)]);
+            let payload = encode_payload(&payload(&[("a", b"x"), ("b", b"")])).unwrap();
+            let mut plain = payload.expose().to_vec();
+            for (at, byte) in &edits {
+                let i = at.index(data.len());
+                data[i] = *byte;
+                let j = at.index(plain.len());
+                plain[j] = *byte;
+            }
+            parsers_hold_up(&data);
+            parsers_hold_up(&data[..cut.index(data.len() + 1)]);
+            parsers_hold_up(&plain);
+            parsers_hold_up(&plain[..cut.index(plain.len() + 1)]);
+        }
+    }
+
     #[test]
     fn names_follow_the_name_rule() {
         assert!(Name::new("Az09._-").is_ok());
