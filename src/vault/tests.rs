@@ -246,6 +246,43 @@ fn values_over_64_kib_are_refused() {
 }
 
 #[test]
+fn an_item_with_65535_fields_takes_no_new_field_but_can_be_updated() {
+    let f = fixture("fake-passphrase-full-item");
+    set(&f.vault, "p", "full", "f00000", "fake-first");
+    // Fill the item to the limit directly, rather than with 65,535 writes.
+    let current = f.vault.load().unwrap();
+    let mut decrypted = current.decrypt_all().unwrap();
+    let entry = decrypted.remove(0);
+    let mut payload = entry.payload;
+    for i in 1..usize::from(u16::MAX) {
+        payload.fields.insert(name(&format!("f{i:05}")), value("v"));
+    }
+    let mut records = current.records.clone();
+    let (nonce, sealed) = seal_payload(
+        &f.vault.vault_id,
+        &records[0].item_id,
+        &entry.item_key,
+        &payload,
+    )
+    .unwrap();
+    records[0].payload_nonce = nonce;
+    records[0].payload_box = sealed;
+    let bytes = seal_file(&current.header, &records, &current.subkeys.mac).unwrap();
+    fs::write(f.dir.join(store::VAULT_FILE), bytes).unwrap();
+
+    let new_field = f.vault.set(
+        &name("p"),
+        &name("full"),
+        &name("one-more"),
+        &value("fake-x"),
+    );
+    assert!(matches!(new_field, Err(Error::TooManyFields)));
+    set(&f.vault, "p", "full", "f00000", "fake-updated");
+    assert_eq!(get(&f.vault, "p", "full", "f00000"), b"fake-updated");
+    set(&f.vault, "p", "other", "field", "fake-another-item");
+}
+
+#[test]
 fn a_wrong_current_passphrase_changes_nothing() {
     let f = fixture("fake-passphrase-right");
     set(&f.vault, "p", "i", "f", "fake-value");

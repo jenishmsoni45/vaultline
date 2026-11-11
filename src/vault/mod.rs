@@ -44,6 +44,8 @@ pub enum Error {
     NotFound(String),
     /// A value longer than 64 KiB.
     ValueTooLarge,
+    /// The item already has 65,535 fields, the most `field_count` can hold.
+    TooManyFields,
     /// The change would make the vault larger than 64 MiB.
     VaultTooLarge,
     /// Argon2id parameters outside the bounds of `docs/vault-format.md` §4.4.
@@ -77,6 +79,7 @@ impl fmt::Display for Error {
             Error::Auth(what) => write!(f, "the vault failed authentication: {what}"),
             Error::NotFound(reference) => write!(f, "no secret at vault://{reference}"),
             Error::ValueTooLarge => f.write_str("a value can be at most 64 KiB"),
+            Error::TooManyFields => f.write_str("an item can have at most 65,535 fields"),
             Error::VaultTooLarge => {
                 f.write_str("this change would make the vault larger than the 64 MiB limit")
             }
@@ -591,10 +594,11 @@ impl Vault {
                 else {
                     return Err(Error::Auth("records and items are out of step"));
                 };
-                entry
-                    .payload
-                    .fields
-                    .insert(field.clone(), value.duplicate());
+                let fields = &mut entry.payload.fields;
+                if !fields.contains_key(field) && fields.len() >= usize::from(u16::MAX) {
+                    return Err(Error::TooManyFields);
+                }
+                fields.insert(field.clone(), value.duplicate());
                 let (nonce, sealed) =
                     seal_payload(vault_id, &record.item_id, &entry.item_key, &entry.payload)?;
                 record.payload_nonce = nonce;

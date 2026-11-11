@@ -93,6 +93,18 @@ fn a_vault_file_open_to_group_or_others_is_refused() {
 }
 
 #[test]
+fn a_vault_file_the_owner_cannot_open_is_explained() {
+    // Mode 0044: the open fails with "permission denied", and the error says
+    // why and how to fix it rather than only reporting the I/O error.
+    let v = TestVault::new("fake-passphrase-unreadable");
+    chmod(&v.path(), 0o044);
+    let err = path_error(Vault::open(&v.dir, &v.passphrase()));
+    chmod(&v.path(), 0o600);
+    assert!(matches!(err, PathError::Accessible { .. }), "{err}");
+    assert!(err.to_string().contains("chmod 600"), "{err}");
+}
+
+#[test]
 fn a_symlinked_vault_file_is_refused() {
     let v = TestVault::new("fake-passphrase-file-link");
     let real = v.tmp.path().join("elsewhere");

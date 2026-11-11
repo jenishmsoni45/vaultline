@@ -56,6 +56,20 @@ fn io(action: &'static str, path: &Path, source: io::Error) -> Error {
     }
 }
 
+/// A failed open: "permission denied" usually means the file belongs to
+/// someone else, so report the ownership or mode problem, with its fix, when
+/// the path check finds one.
+fn open_error(action: &'static str, path: &Path, err: io::Error) -> Error {
+    if err.kind() == io::ErrorKind::PermissionDenied {
+        if let Ok(meta) = fs::symlink_metadata(path) {
+            if let Err(problem) = paths::check_file(path, &meta) {
+                return Error::Path(problem);
+            }
+        }
+    }
+    io(action, path, err)
+}
+
 /// Opens `path` without following a symlink, creating it with mode 0600 if
 /// it is missing, and checks it.
 fn open_or_create_private(path: &Path) -> Result<File, Error> {
@@ -77,8 +91,8 @@ fn open_or_create_private(path: &Path) -> Result<File, Error> {
             .write(true)
             .custom_flags(no_follow())
             .open(path)
-            .map_err(|e| io("open", path, e))?,
-        Err(e) => return Err(io("create", path, e)),
+            .map_err(|e| open_error("open", path, e))?,
+        Err(e) => return Err(open_error("create", path, e)),
     };
     let meta = file.metadata().map_err(|e| io("inspect", path, e))?;
     paths::check_file(path, &meta)?;
@@ -133,7 +147,7 @@ pub fn read_vault(dir: &Path) -> Result<Vec<u8>, Error> {
             if e.kind() == io::ErrorKind::NotFound {
                 Error::Missing(dir.to_path_buf())
             } else {
-                io("open", &path, e)
+                open_error("open", &path, e)
             }
         })?;
     let meta = file.metadata().map_err(|e| io("inspect", &path, e))?;

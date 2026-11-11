@@ -25,6 +25,10 @@ test-support = []
 
 [dependencies]
 argon2 = { version = "0.6", default-features = false, features = ["alloc", "zeroize"] }
+# Not called directly: turns on BLAKE2b's `zeroize` feature, which argon2's own
+# `zeroize` feature leaves off, so the hash states Argon2id feeds the passphrase
+# through are wiped on drop (D-043).
+blake2 = { version = "0.11", default-features = false, features = ["zeroize"] }
 chacha20poly1305 = { version = "0.11", default-features = false, features = ["zeroize"] }
 clap = { version = "4", features = ["derive"] }
 getrandom = "0.4"

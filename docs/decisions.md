@@ -517,4 +517,4 @@ None of these change an answer above. Each fills in a detail the answers left op
 
 - **Found while wiring Argon2id:** in `argon2` 0.6, the allocating `hash_password_into` frees its working memory without wiping it, even with the `zeroize` feature. That feature only wipes the initial and final hashes. `design.md` §10 says the working memory is wiped.
 - **Implementation:** `vault::crypto::derive_kek` allocates the memory blocks itself, in a `Zeroizing<Vec<Block>>`, and passes them to `hash_password_into_with_memory`, so they are wiped before they are freed. The statement in `design.md` §10 holds, so no doc change is needed.
-- **Related:** `hmac` and `sha2` are built with their `zeroize` features, so HMAC and SHA-256 states are wiped on drop.
+- **Related:** `hmac` and `sha2` are built with their `zeroize` features, so HMAC and SHA-256 states are wiped on drop. `argon2`'s `zeroize` feature doesn't turn on `blake2`'s, so `blake2` is listed as a direct dependency only to turn its `zeroize` feature on; the BLAKE2b states that Argon2id feeds the passphrase through are then wiped as well.
