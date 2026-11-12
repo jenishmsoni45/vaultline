@@ -94,3 +94,86 @@ fn names_are_one_to_64_allowed_bytes() {
     assert_eq!(Name::new(""), Err(NameError::Empty));
     assert_eq!(Name::new("has space"), Err(NameError::BadByte));
 }
+
+// ---- Phase 3: templates and env files (NFR-11, P3-3, P3-4) ----
+
+const SIXTEEN_MIB: u64 = 16 * 1024 * 1024;
+
+/// A template over 16 MiB is rejected, and exactly 16 MiB is not. The file is
+/// sparse, so it takes no space on disk.
+#[test]
+fn a_template_is_limited_to_16_mib() {
+    use crate::common::cli::Sandbox;
+    let sb = Sandbox::new();
+    let path = sb.work.join("big.tpl");
+
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(SIXTEEN_MIB + 1).unwrap();
+    let ran = sb.run(&["inject", "-i", path.to_str().unwrap()], b"");
+    ran.fails_with("larger than the 16 MiB limit");
+    assert!(ran.stdout.is_empty());
+
+    file.set_len(SIXTEEN_MIB).unwrap();
+    let ran = sb.run(&["inject", "-i", path.to_str().unwrap()], b"");
+    ran.ok();
+    assert_eq!(ran.stdout.len() as u64, SIXTEEN_MIB);
+}
+
+/// The same limit applies to a template on standard input, which is read only
+/// up to the limit.
+#[test]
+fn a_template_on_stdin_is_limited_to_16_mib() {
+    use crate::common::cli::Sandbox;
+    let sb = Sandbox::new();
+    // The first line is the passphrase (D-037); the template is what follows.
+    let mut stdin = b"unused-passphrase\n".to_vec();
+    stdin.extend(vec![b'x'; SIXTEEN_MIB as usize + 1]);
+    let ran = sb.run(&["inject"], &stdin);
+    ran.fails_with("larger than the 16 MiB limit");
+    assert!(ran.stdout.is_empty());
+}
+
+/// An env file over 16 MiB is rejected, and exactly 16 MiB is not.
+#[test]
+fn an_env_file_is_limited_to_16_mib() {
+    use crate::common::cli::Sandbox;
+    let sb = Sandbox::new();
+    let path = sb.work.join("big.env");
+    let started = sb.work.join("started");
+    let script = "touch started";
+
+    // All comment, so that it is valid at exactly the limit.
+    std::fs::write(&path, vec![b'#'; SIXTEEN_MIB as usize]).unwrap();
+    sb.run(
+        &["run", "--env-file", "big.env", "--", "sh", "-c", script],
+        b"",
+    )
+    .ok();
+    assert!(started.exists());
+    std::fs::remove_file(&started).unwrap();
+
+    std::fs::write(&path, vec![b'#'; SIXTEEN_MIB as usize + 1]).unwrap();
+    sb.run(
+        &["run", "--env-file", "big.env", "--", "sh", "-c", script],
+        b"",
+    )
+    .fails_with("larger than the 16 MiB limit");
+    assert!(!started.exists(), "the child must not start");
+}
+
+/// Hostile templates finish quickly: scanning is linear.
+#[test]
+fn hostile_templates_are_handled_in_linear_time() {
+    use crate::common::cli::Sandbox;
+    let sb = Sandbox::new();
+    for pattern in ["{{ ", "{{", "{", "{{\t{{\t"] {
+        let template = pattern.repeat(2_000_000 / pattern.len());
+        let started = std::time::Instant::now();
+        let mut stdin = b"unused-passphrase\n".to_vec();
+        stdin.extend_from_slice(template.as_bytes());
+        let ran = sb.run(&["inject"], &stdin);
+        ran.ok();
+        assert_eq!(ran.stdout, template.as_bytes(), "{pattern:?}");
+        assert!(started.elapsed().as_secs() < 30, "{pattern:?} was slow");
+    }
+}
