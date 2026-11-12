@@ -17,5 +17,37 @@ path = "src/lib.rs"
 name = "vaultline"
 path = "src/main.rs"
 
+[features]
+# Test-only hooks: the re-MAC helper (design.md section 2, S3), injected I/O
+# faults (P2-10) and a KDF call counter (P2-8). Only this crate's own tests turn
+# it on, through the dev-dependency below; a normal build never contains it.
+test-support = []
+
 [dependencies]
+argon2 = { version = "0.5", default-features = false, features = ["alloc", "zeroize"] }
+chacha20poly1305 = { version = "0.10", default-features = false }
 clap = { version = "4", features = ["derive"] }
+hkdf = "0.12"
+hmac = "0.12"
+nix = { version = "0.31", default-features = false, features = ["fs", "user"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+secrecy = "0.10"
+sha2 = { version = "0.10", default-features = false }
+zeroize = "1"
+
+[dev-dependencies]
+criterion = { version = "0.8", default-features = false, features = ["cargo_bench_support"] }
+proptest = { version = "1", default-features = false, features = ["std"] }
+static_assertions = "1"
+tempfile = "3"
+vaultline = { path = ".", features = ["test-support"] }
+
+[[bench]]
+name = "unlock"
+harness = false
+
+# Argon2id, ChaCha20 and SHA-256 are far slower without optimisation. Building
+# dependencies (never vaultline itself) optimised keeps the tamper tests and the
+# one fixture at the default parameters fast in `cargo test`.
+[profile.dev.package."*"]
+opt-level = 3

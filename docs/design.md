@@ -206,7 +206,7 @@ blob     = len:u32 bytes                            ; values, at most 64 KiB; pa
   - on Linux, calls `prctl(PR_SET_DUMPABLE, 0)`.
 
   Both go through `nix` and affect only vaultline's own processes.
-- **Secret types:** secrets are held in `secrecy` and `zeroize` types: `SecretString`, `SecretBox<[u8]>`, `Zeroizing<[u8; 32]>`, and wrappers in `src/secret.rs`. None of them implements Debug or Display, and `static_assertions` checks that in tests.
+- **Secret types:** secrets are held in the wrapper types in `src/secret.rs`, which keep them in `secrecy` and `zeroize` types (`SecretBox`, `Zeroizing`) and wipe them on drop. Those library types do implement `Debug` (secrecy's prints `[REDACTED]`, and `Zeroizing<[u8; 32]>` prints the bytes), so they are only ever used inside the wrappers. The wrappers, and every type that holds one, implement neither Debug nor Display, and `static_assertions` checks that in tests (D-039).
 - **Panics** unwind (the default), so wipe-on-drop still runs. No panic message formats a secret, and none can, since the types don't implement Debug or Display.
 - **Parser modules** deny `clippy::unwrap_used`, `expect_used`, `indexing_slicing`, `panic` and `arithmetic_side_effects`. The parser modules are `vault/format.rs`, `inject/{reference,envfile,template}.rs`, `agent/protocol.rs` and `audit.rs`.
 - **Error messages** never contain values or passphrases. Every CLI test asserts that the fake secret values don't appear in stderr.
@@ -259,7 +259,7 @@ blob     = len:u32 bytes                            ; values, at most 64 KiB; pa
 ### 12.2 Rules every test follows (D-020)
 
 - **Temporary directories:** each test creates its own and points `VAULTLINE_DIR` (and `HOME` and `TMPDIR` where relevant) there. Nothing outside it is touched.
-- **Cheap parameters:** end-to-end tests build their vaults through a library constructor that takes cheap Argon2 parameters, and the binary opens them like any other vault. Only one `init` test and the `default-params.vault` fixture use 256 MiB, and those tests run one at a time.
+- **Cheap parameters:** end-to-end tests build their vaults through a library constructor that takes cheap Argon2 parameters, and the binary opens them like any other vault. Only one `init` test, the `default-params.vault` fixture, and one `passwd` test and one `rotate` test in each phase that tests them use 256 MiB, because `passwd` and `rotate` always write the default parameters. Those tests run one at a time (D-040).
 - **No leftover agents:** every test that starts an agent holds a guard whose `Drop` stops it and waits for it to exit, so nothing keeps running after `cargo test`.
 - **No secret leaks in test output:** fake secrets are random markers such as `fake-secret-<random>`, and every CLI test checks that stderr doesn't contain them.
 - **No `sudo` on the Mac:** tests that need root to act as another UID run only when `VAULTLINE_CI_SUDO=1`, which only CI sets.
