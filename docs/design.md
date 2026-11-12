@@ -117,7 +117,7 @@ There is no escape syntax. A template can't output the literal text `{{ vault://
 2. **One masker per stream:** stdout and stderr each get their own masker and their own thread. Each masker writes to the matching stream of vaultline.
 3. **Matching:** a multi-pattern automaton (`aho-corasick`) finds every occurrence, overlapping ones included. After each chunk, the masker works out h, the start of the longest tail of its buffer that is a proper prefix of some secret.
 4. **What can be decided:** every byte before h is final, because any occurrence that covers it has already completed. Bytes before h are written out, with each maximal covered run replaced by one marker. Bytes from h onwards are held.
-5. **Runs that cross the boundary:** a flag remembers whether the last byte written was covered. A covered run that continues across h is then emitted as one marker, not two.
+5. **Runs that cross the boundary:** the masker remembers two things (D-045). A flag says whether the last byte written was covered, so a covered run that continues across h is emitted as one marker, not two. A count says how many of the first held bytes an earlier match has already covered. That match started before h and is no longer in the buffer, so without the count those bytes would be written as plain text when no later match covers them. Each scan treats the first `count` bytes as covered.
 6. **End of stream:** the masker flushes with h equal to the buffer length.
 7. **Memory:** the held tail is shorter than the longest secret, so memory stays bounded whatever the output.
 8. **Output that isn't text:** output is handled as bytes and need not be UTF-8.
