@@ -68,7 +68,7 @@ impl fmt::Display for InputError {
             InputError::TooShort { characters } => write!(
                 f,
                 "the passphrase has {characters} characters; it needs at least \
-                 {MIN_PASSPHRASE_CHARS} (several random words work well)"
+                 {MIN_PASSPHRASE_CHARS} characters (several random words work well)"
             ),
             InputError::NotUtf8 => f.write_str(
                 "a new passphrase must be valid UTF-8, so that its characters can be counted",
