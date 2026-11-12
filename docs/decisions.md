@@ -530,5 +530,6 @@ None of these change an answer above. Each fills in a detail the answers left op
 - **Decision:** A.
 - **Why:** It keeps Rust 1.86, installs nothing and ships no known constant-time bug. The algorithms are the same, so the format doesn't change. The v1 fixtures, written with the current generation, open unchanged with the previous one, which also cross-checks the two implementations.
 - **Doc changes (approved):** the D-038 edits are undone. `vault-format.md` §2, `design.md` §13 and `phases.md` again say randomness comes from `getrandom` through `rand_core::OsRng`.
+- **License allowlist:** `subtle`, which this generation uses for constant-time comparisons, is BSD-3-Clause. It is permissive and OSI-approved, so `deny.toml` now allows it. CI's cargo-deny run found this.
 - **Cost:** `sha2`, `hmac` and `blake2` in this generation have no `zeroize` feature, so their internal states aren't wiped on drop (D-043).
 - **Later:** once the project moves past Rust 1.86, the current generation, with a fixed `ctutils`, can come back as a plain dependency upgrade, with no format change.
