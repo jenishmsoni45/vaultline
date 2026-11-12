@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use crate::hardening::HardeningError;
 use crate::inject::envfile::{self, EnvFileError, MAX_ENV_FILE_LEN};
 use crate::inject::mask::MaskError;
-use crate::inject::output::{self, OutputError, raw_stdout};
+use crate::inject::output::{self, OutputError, raw_stdout, say};
 use crate::inject::reference::{Reference, ReferenceError, escape};
 use crate::inject::run::{self, RunError};
 use crate::inject::template::{MAX_TEMPLATE_LEN, Resolved, Template, TemplateError};
@@ -163,9 +163,9 @@ fn existing_vault_dir() -> Result<PathBuf, CliError> {
 fn open_with(dir: &Path, passphrase: &Passphrase) -> Result<Vault, CliError> {
     let vault = Vault::open(dir, passphrase)?;
     if vault.kdf_params().below_defaults() {
-        eprintln!(
+        say(
             "vaultline: warning: this vault uses weaker Argon2id parameters than the current \
-             defaults; run `vaultline passwd` to upgrade it"
+             defaults; run `vaultline passwd` to upgrade it",
         );
     }
     Ok(vault)
@@ -236,7 +236,7 @@ pub fn init(passphrases: &mut Passphrases) -> Result<(), CliError> {
     }
     let passphrase = passphrases.ask_new("New passphrase (at least 12 characters): ")?;
     Vault::create(&dir, &passphrase, KdfParams::DEFAULT)?;
-    eprintln!("vaultline: created a vault in {}", dir.display());
+    say(format!("vaultline: created a vault in {}", dir.display()));
     Ok(())
 }
 
@@ -307,9 +307,9 @@ pub fn passwd(passphrases: &mut Passphrases) -> Result<(), CliError> {
     let current = passphrases.ask("Current passphrase: ")?;
     let new = passphrases.ask_new("New passphrase (at least 12 characters): ")?;
     vault::passwd(&dir, &current, &new)?;
-    eprintln!(
+    say(
         "vaultline: the passphrase was changed. The master key is the same; if the old \
-         passphrase may have been seen, run `vaultline rotate` too."
+         passphrase may have been seen, run `vaultline rotate` too.",
     );
     Ok(())
 }
@@ -320,7 +320,7 @@ pub fn rotate(passphrases: &mut Passphrases) -> Result<(), CliError> {
     let dir = existing_vault_dir()?;
     let passphrase = passphrases.ask("Passphrase: ")?;
     vault::rotate(&dir, &passphrase)?;
-    eprintln!("vaultline: every key was replaced and every item encrypted again");
+    say("vaultline: every key was replaced and every item encrypted again");
     Ok(())
 }
 
@@ -395,7 +395,7 @@ pub fn run(
         resolve(&vault, &references, "nothing was started")?
     };
     for line in run::warnings(&plan, &values, no_mask) {
-        eprintln!("{line}");
+        say(line);
     }
     Ok(run::execute(&plan, values, command, no_mask)?)
 }

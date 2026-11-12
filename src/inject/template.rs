@@ -489,6 +489,35 @@ mod tests {
             let _ = Template::parse(text.as_bytes());
         }
 
+        /// The property the `template` fuzz target checks: every tag becomes
+        /// one byte here, so the output is never longer than the input, and
+        /// a parsed template always renders when every reference is resolved.
+        #[test]
+        fn rendering_with_one_byte_values_never_grows_the_template(
+            pieces in proptest::collection::vec(
+                prop_oneof![
+                    Just("{{vault://a/b/c}}".to_string()),
+                    Just("{{ vault://x/y/z }}".to_string()),
+                    Just("{{".to_string()),
+                    Just("}}".to_string()),
+                    "[ -~\n]{0,8}",
+                ],
+                0..16,
+            )
+        ) {
+            let text = pieces.concat();
+            if let Ok(template) = Template::parse(text.as_bytes()) {
+                let values: Resolved = template
+                    .references()
+                    .into_iter()
+                    .map(|r| (r.clone(), value(b"V")))
+                    .collect();
+                let mut out = Vec::new();
+                template.render(&values, &mut out).unwrap();
+                prop_assert!(out.len() <= text.len());
+            }
+        }
+
         #[test]
         fn a_template_renders_back_to_itself_when_values_equal_their_tags(
             pieces in proptest::collection::vec(

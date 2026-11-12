@@ -16,6 +16,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use vaultline::commands::{self, CliError};
 use vaultline::hardening;
+use vaultline::inject::output::say;
 use vaultline::input::Passphrases;
 
 /// Exit code for any vaultline error (`docs/design.md` §4). clap itself exits
@@ -192,7 +193,7 @@ fn dispatch(cli: Cli) -> Result<u8, CliError> {
             input.as_deref(),
         )),
         Command::Unlock { .. } | Command::Lock | Command::Agent { .. } | Command::Audit { .. } => {
-            eprintln!("vaultline: not implemented yet");
+            say("vaultline: not implemented yet");
             Ok(EXIT_ERROR)
         }
     }
@@ -201,13 +202,13 @@ fn dispatch(cli: Cli) -> Result<u8, CliError> {
 fn main() -> ExitCode {
     // Before anything else, in every invocation (docs/design.md section 10).
     if let Err(e) = hardening::apply() {
-        eprintln!("vaultline: {e}");
+        say(format!("vaultline: {e}"));
         return ExitCode::from(EXIT_ERROR);
     }
     match dispatch(Cli::parse()) {
         Ok(code) => ExitCode::from(code),
         Err(e) => {
-            eprintln!("vaultline: {e}");
+            say(format!("vaultline: {e}"));
             ExitCode::from(EXIT_ERROR)
         }
     }

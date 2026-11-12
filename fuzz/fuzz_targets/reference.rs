@@ -19,7 +19,8 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(text) = std::str::from_utf8(data) {
         let _ = Reference::parse_cli(text);
     }
-    // Error messages print untrusted bytes through `escape`: one line, short.
+    // Error messages print untrusted bytes through `escape`: one line, and at
+    // most 80 bytes shown, each as at most four characters (`\xNN`), then `...`.
     let shown = escape(data);
-    assert!(!shown.contains('\n') && shown.len() <= 83 + 3);
+    assert!(!shown.contains('\n') && shown.len() <= 80 * 4 + 3);
 });

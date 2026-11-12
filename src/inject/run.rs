@@ -22,6 +22,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
+use std::fs::File;
 use std::io::{self, BufWriter, Read, Write};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::ExitStatusExt;
@@ -37,7 +38,7 @@ use zeroize::Zeroizing;
 
 use super::envfile::{Assignment, EnvValue};
 use super::mask::{MaskError, Masker};
-use super::output::{raw_stderr, raw_stdout};
+use super::output::{raw_stderr, raw_stdout, say};
 use super::reference::{Reference, ReferenceError, SCHEME, escape};
 use super::template::Resolved;
 
@@ -216,12 +217,17 @@ pub fn execute(
 ) -> Result<u8, RunError> {
     let (program, args) = command.split_first().ok_or(RunError::NoCommand)?;
 
-    let mut maskers = None;
+    // Everything that can fail without the child being involved is set up
+    // before it starts, so a failure here never leaves a child running.
+    let mut streams = None;
     if !no_mask {
         let secrets = || values.values().map(|v| v.expose());
         let stdout = Masker::new(secrets()).map_err(RunError::Mask)?;
         let stderr = Masker::new(secrets()).map_err(RunError::Mask)?;
-        maskers = Some((stdout, stderr));
+        streams = Some((
+            (stdout, stream_handle("standard output", raw_stdout())?),
+            (stderr, stream_handle("standard error", raw_stderr())?),
+        ));
     }
 
     let mut cmd = Command::new(program);
@@ -237,7 +243,7 @@ pub fn execute(
         cmd.env(name, OsStr::from_bytes(bytes));
     }
     cmd.stdin(Stdio::inherit());
-    if maskers.is_some() {
+    if streams.is_some() {
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     } else {
         cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit());
@@ -256,13 +262,16 @@ pub fn execute(
     // gone (threat model R6).
     drop(cmd);
 
-    let pid = i32::try_from(child.id())
-        .map(Pid::from_raw)
-        .map_err(|_| RunError::Io(io::Error::other("the child's process ID is out of range")))?;
-    // `Some` while the child has not been reaped. A signal is only forwarded
-    // under this lock and only while it holds the pid, so a pid that the
-    // system could reuse is never signalled.
-    let live = Arc::new(Mutex::new(Some(pid)));
+    // A process ID that doesn't fit an i32 can't happen on macOS or Linux; if
+    // it did, nothing would be forwarded, and no other process would be hit.
+    let pid = i32::try_from(child.id()).ok().map(Pid::from_raw);
+    // `Some` until the child has been reaped. The forwarder signals only while
+    // it holds the pid under this lock, and `run` clears it right after
+    // `wait` returns. The gap between those two is a few instructions long,
+    // and the system doesn't hand a freed pid to a new process that quickly,
+    // so a reused pid is not signalled in practice. Blocking in `wait` and
+    // clearing the pid in one step isn't possible with the standard library.
+    let live = Arc::new(Mutex::new(pid));
     let forwarder = {
         let live = Arc::clone(&live);
         thread::spawn(move || {
@@ -284,16 +293,14 @@ pub fn execute(
     };
 
     let mut pumps = Vec::new();
-    if let Some((stdout_masker, stderr_masker)) = maskers {
+    if let Some(((stdout_masker, out), (stderr_masker, err))) = streams {
         if let Some(pipe) = child.stdout.take() {
-            let out = raw_stdout().map_err(RunError::Io)?;
             pumps.push((
                 "standard output",
                 thread::spawn(move || pump(pipe, stdout_masker, out)),
             ));
         }
         if let Some(pipe) = child.stderr.take() {
-            let err = raw_stderr().map_err(RunError::Io)?;
             pumps.push((
                 "standard error",
                 thread::spawn(move || pump(pipe, stderr_masker, err)),
@@ -315,13 +322,28 @@ pub fn execute(
             // was closed when the pump returned, so the child saw the broken
             // pipe too (§7 step 6). Nothing to report.
             Ok(Err(e)) if e.kind() == io::ErrorKind::BrokenPipe => {}
-            Ok(Err(e)) => eprintln!("vaultline: couldn't pass on the command's {stream}: {e}"),
-            Err(_) => eprintln!("vaultline: the {stream} masker stopped unexpectedly"),
+            Ok(Err(e)) => say(format!(
+                "vaultline: couldn't pass on the command's {stream}: {e}"
+            )),
+            Err(_) => say(format!(
+                "vaultline: the {stream} masker stopped unexpectedly"
+            )),
         }
     }
     drop(values);
 
     Ok(exit_code(status.map_err(RunError::Io)?))
+}
+
+/// A duplicate of one of vaultline's own output streams, or an error that
+/// says which one is not open.
+fn stream_handle(name: &str, handle: io::Result<File>) -> Result<File, RunError> {
+    handle.map_err(|source| {
+        RunError::Io(io::Error::new(
+            source.kind(),
+            format!("{name} is not open, so the command's output can't be passed on: {source}"),
+        ))
+    })
 }
 
 /// Copies one of the child's output pipes through a masker to `out`,
@@ -353,11 +375,13 @@ fn pump<R: Read, W: Write>(mut pipe: R, mut masker: Masker, out: W) -> io::Resul
 fn spawn_failure(program: &str, source: io::Error) -> Result<u8, RunError> {
     match source.kind() {
         io::ErrorKind::NotFound => {
-            eprintln!("vaultline: command not found: {program}");
+            say(format!("vaultline: command not found: {program}"));
             Ok(EXIT_NOT_FOUND)
         }
         io::ErrorKind::PermissionDenied => {
-            eprintln!("vaultline: can't run {program}: permission denied or not executable");
+            say(format!(
+                "vaultline: can't run {program}: permission denied or not executable"
+            ));
             Ok(EXIT_NOT_EXECUTABLE)
         }
         // A NUL byte in an argument or a value can't be passed on.
@@ -366,7 +390,7 @@ fn spawn_failure(program: &str, source: io::Error) -> Result<u8, RunError> {
             source,
         }),
         _ => {
-            eprintln!("vaultline: can't run {program}: {source}");
+            say(format!("vaultline: can't run {program}: {source}"));
             Ok(EXIT_NOT_EXECUTABLE)
         }
     }

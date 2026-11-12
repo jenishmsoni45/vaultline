@@ -12,7 +12,7 @@
 
 use std::fmt;
 use std::fs::File;
-use std::io;
+use std::io::{self, Write};
 use std::os::fd::AsFd;
 
 /// Standard output is a regular file.
@@ -78,6 +78,13 @@ pub fn raw_stdout() -> io::Result<File> {
 /// The same for standard error.
 pub fn raw_stderr() -> io::Result<File> {
     Ok(File::from(io::stderr().as_fd().try_clone_to_owned()?))
+}
+
+/// Prints one line to standard error and ignores a failure to do so. `eprintln!`
+/// panics when standard error is a closed pipe, and a note or a warning is not
+/// worth stopping for.
+pub fn say(message: impl fmt::Display) {
+    let _ = writeln!(io::stderr(), "{message}");
 }
 
 #[cfg(test)]

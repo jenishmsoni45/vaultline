@@ -231,6 +231,30 @@ mod tests {
         assert!(Reference::parse_cli("").is_err());
     }
 
+    proptest::proptest! {
+        /// The properties the `reference` fuzz target checks, so that a bug in
+        /// the harness shows up here and not only in CI.
+        #[test]
+        fn the_grammar_is_canonical_and_never_panics(
+            bytes in proptest::collection::vec(proptest::prelude::any::<u8>(), 0..64),
+            text in "(vault://)?[A-Za-z0-9._/-]{0,24}",
+        ) {
+            for input in [bytes.as_slice(), text.as_bytes()] {
+                if let Ok(reference) = Reference::parse(input) {
+                    let printed = reference.to_string();
+                    proptest::prop_assert_eq!(printed.as_bytes(), input);
+                    let as_text = std::str::from_utf8(input).unwrap();
+                    proptest::prop_assert_eq!(Reference::parse_cli(as_text), Ok(reference));
+                }
+                let shown = escape(input);
+                proptest::prop_assert!(!shown.contains('\n') && shown.len() <= 80 * 4 + 3);
+            }
+            if let Ok(as_text) = std::str::from_utf8(&bytes) {
+                let _ = Reference::parse_cli(as_text);
+            }
+        }
+    }
+
     #[test]
     fn escape_keeps_printable_text_and_hides_everything_else() {
         assert_eq!(escape(b"vault://a/b/c"), "vault://a/b/c");
@@ -238,5 +262,9 @@ mod tests {
         let long = escape(&[b'a'; 500]);
         assert_eq!(long.len(), 83);
         assert!(long.ends_with("..."));
+        // Bytes that are escaped take four characters each.
+        let worst = escape(&[0u8; 500]);
+        assert_eq!(worst.len(), 80 * 4 + 3);
+        assert!(!worst.contains('\n'));
     }
 }
