@@ -4,27 +4,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-/// Every invocation that must reach a stub, covering each command and option
-/// in `docs/design.md` §4.
+/// Every invocation that must still reach a stub: the agent and audit commands,
+/// which arrive in Phase 4. Everything else is implemented (Phase 3) and has
+/// its own tests.
 const STUBBED: &[&[&str]] = &[
-    &["init"],
-    &["--passphrase-stdin", "init"],
-    &["init", "--passphrase-stdin"],
-    &["set", "vault://p/i/f"],
-    &["set", "p/i/f", "--raw"],
-    &["get", "vault://p/i/f"],
-    &["get", "p/i/f"],
-    &["list"],
-    &["list", "p"],
-    &["rm", "p/i/f"],
-    &["passwd"],
-    &["rotate"],
-    &["run", "--", "true"],
-    &["run", "--env-file", "x.env", "--no-mask", "--", "true", "a"],
-    &["inject"],
-    &["inject", "-i", "t.tpl"],
     &["unlock"],
     &["unlock", "--idle-timeout", "5m"],
+    &["--passphrase-stdin", "unlock"],
     &["lock"],
     &["agent", "stop"],
     &["agent", "serve"],
@@ -93,7 +79,7 @@ fn non_unix_targets_fail_to_compile() {
 }
 
 #[test]
-fn every_command_is_stubbed() {
+fn the_agent_and_audit_commands_are_still_stubs() {
     for args in STUBBED {
         let out = vaultline(args);
         let stderr = String::from_utf8_lossy(&out.stderr);

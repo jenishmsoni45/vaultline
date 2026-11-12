@@ -104,6 +104,32 @@ fn fuzz_crate_is_outside_the_workspace_with_the_vault_file_target() {
     assert!(!targets.join("smoke.rs").exists());
 }
 
+/// P3-12: the `reference` and `template` targets exist next to `vault_file`,
+/// and are registered in the fuzz crate. `make fuzz` runs every target that
+/// `cargo fuzz list` finds, so CI smoke-tests them for 60 seconds each.
+#[test]
+fn fuzz_crate_has_the_reference_and_template_targets() {
+    let manifest = read("fuzz/Cargo.toml");
+    let targets = Path::new(env!("CARGO_MANIFEST_DIR")).join("fuzz/fuzz_targets");
+    for target in ["vault_file", "reference", "template"] {
+        assert!(
+            manifest.contains(&format!("name = \"{target}\"")),
+            "fuzz/Cargo.toml must register {target}"
+        );
+        assert!(
+            manifest.contains(&format!("path = \"fuzz_targets/{target}.rs\"")),
+            "fuzz/Cargo.toml must point {target} at its file"
+        );
+        let source = fs::read_to_string(targets.join(format!("{target}.rs")))
+            .unwrap_or_else(|e| panic!("cannot read the {target} target: {e}"));
+        assert!(
+            source.contains("fuzz_target!"),
+            "{target} is not a fuzz target"
+        );
+    }
+    assert!(read("Makefile").contains("cargo +nightly fuzz list"));
+}
+
 /// The tests that need another user's files run in CI only, where both jobs
 /// set `VAULTLINE_CI_SUDO=1` (docs/design.md section 12.2).
 #[test]

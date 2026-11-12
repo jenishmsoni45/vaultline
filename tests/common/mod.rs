@@ -4,6 +4,7 @@
 
 #![allow(dead_code)]
 
+pub mod cli;
 pub mod fixture_readme;
 
 use std::fs::{self, Permissions};

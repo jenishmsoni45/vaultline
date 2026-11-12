@@ -1,6 +1,6 @@
 # The fuzz crate is deliberately outside the main workspace: stable `cargo test`
 # never builds it, and it needs the nightly toolchain, which runs only in CI
-# (D-022). Phase 3 adds the `reference` and `template` targets, and Phase 4
+# (D-022). Phase 3 added the `reference` and `template` targets; Phase 4 adds
 # `agent_message` (D-035).
 
 [package]
@@ -19,6 +19,20 @@ vaultline = { path = ".." }
 [[bin]]
 name = "vault_file"
 path = "fuzz_targets/vault_file.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "reference"
+path = "fuzz_targets/reference.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "template"
+path = "fuzz_targets/template.rs"
 test = false
 doc = false
 bench = false

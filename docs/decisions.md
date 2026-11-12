@@ -533,3 +533,23 @@ None of these change an answer above. Each fills in a detail the answers left op
 - **License allowlist:** `subtle`, which this generation uses for constant-time comparisons, is BSD-3-Clause. It is permissive and OSI-approved, so `deny.toml` now allows it. CI's cargo-deny run found this.
 - **Cost:** `sha2`, `hmac` and `blake2` in this generation have no `zeroize` feature, so their internal states aren't wiped on drop (D-043).
 - **Later:** once the project moves past Rust 1.86, the current generation, with a fixed `ctutils`, can come back as a plain dependency upgrade, with no format change.
+
+## Phase 3: CLI, injection and masking
+
+### D-045 · The masker also remembers which held bytes are already covered (amends `design.md` §6)
+
+- **Question:** Found while reading `design.md` §6 before writing the masker. After each chunk the masker holds back the tail from `h`, the longest suffix that is a proper prefix of some secret. The doc keeps one flag, "the last byte written was covered". But the held tail can begin inside a match that has already completed. With secrets `abcd` and `cdXYZ` and the output `abcd` then `Q`, the bytes `cd` are covered by `abcd`, which is no longer in the buffer once `ab` is written. They are held because `cdXYZ` might follow. When `Q` arrives, nothing matches, and `cd` would be written in plain text, which leaks part of a secret (S7). The overlapping-secrets test in P3-8 would find it.
+- **Options:**
+  - A: besides the flag, remember how many leading held bytes an earlier match already covered.
+  - B: hold everything from the start of any match that touches the held tail. This needs no extra state, but the held bytes can reach the longest secret's length, so NFR-10 would have to say "at most" instead of "fewer than".
+  - C: leave §6 as written, which fails the test.
+- **Decision:** A.
+- **Design:** after each chunk the masker keeps the flag and a count `carried`, the length of the covered run that starts at `h`. Only a match that started before `h` can cover a prefix of the held bytes; a match inside the held bytes is found again on the next scan. The next scan treats the first `carried` bytes as covered. Held bytes stay shorter than the longest secret.
+- **Doc change (approved):** `design.md` §6, steps 4 and 5.
+
+### D-046 · How the 12-character passphrase rule counts (settles a detail of D-029)
+
+- **Question:** Passphrases are read as raw bytes, from stdin or a prompt, and a multi-byte character is more than one byte. How do `init` and `passwd` count the 12?
+- **Options:** A: count Unicode characters, and require valid UTF-8 at `init` and `passwd`. B: count bytes.
+- **Decision:** A.
+- **Design:** `init` and `passwd` reject a new passphrase that isn't valid UTF-8, or that has fewer than 12 characters (Unicode scalar values), and the error says which. Unlocking an existing vault takes any bytes, exactly as entered (`vault-format.md` §3), so nothing already created is locked out. Counting bytes was rejected because a short non-ASCII passphrase would pass a rule that says characters.
