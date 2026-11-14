@@ -113,7 +113,14 @@ fn no_command_writes_a_secret_or_the_passphrase_to_disk_through_an_agent() {
     env_ref(
         &sb,
         "vault://demo/api/typed",
-        &["--env-file", "app.env", "--", "sh", "-c", "echo \"$FROM_FILE $API\""],
+        &[
+            "--env-file",
+            "app.env",
+            "--",
+            "sh",
+            "-c",
+            "echo \"$FROM_FILE $API\"",
+        ],
     )
     .ok();
     let ran = sb.run_pass(&["inject"], b"key={{ vault://demo/api/key }}\n");
