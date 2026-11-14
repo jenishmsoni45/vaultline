@@ -281,13 +281,13 @@ impl Agent {
                     Flow::Continue,
                 )
             }
-            Request::Lock => (done(self.wipe(LockEvent::Locked)), Flow::Continue),
+            Request::Lock => (wiped(self.wipe(LockEvent::Locked)), Flow::Continue),
             Request::Stop => {
                 let recorded = self.wipe(LockEvent::Stopped);
                 // The socket goes before the answer, so that a command that
                 // has seen the answer can rely on it being gone.
                 remove_socket(&self.dir);
-                (done(recorded), Flow::Stop)
+                (wiped(recorded), Flow::Stop)
             }
             Request::Unlock(passphrase) => {
                 if self.is_unlocked() {
@@ -382,6 +382,18 @@ impl Agent {
         };
         let _ = self.wipe(event);
         remove_socket(&self.dir);
+    }
+}
+
+/// The answer to Lock and Stop. The key is gone either way; the error says
+/// that the record of it couldn't be written, so nobody thinks it is still held.
+fn wiped(result: Result<(), Error>) -> Response {
+    match result {
+        Ok(()) => Response::Ok(Reply::Done),
+        Err(e) => Response::error(
+            code::VAULT,
+            format!("the key was wiped, but the record of it could not be written: {e}"),
+        ),
     }
 }
 

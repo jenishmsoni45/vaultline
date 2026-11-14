@@ -324,3 +324,23 @@ fn a_stale_socket_is_cleared_but_nothing_else_is() {
     ));
     assert!(fs::symlink_metadata(&path).is_ok());
 }
+
+/// Lock and Stop wipe the key first, and say so if the audit log then can't be
+/// written (D-047): the key is not still held just because the answer is an
+/// error.
+#[test]
+fn lock_with_a_damaged_log_still_wipes_the_key_and_says_so() {
+    let mut f = Fixture::unlocked();
+    let log = f.tmp.path().join(crate::audit::LOG_FILE);
+    let mut bytes = fs::read(&log).unwrap();
+    bytes.truncate(bytes.len() - 3);
+    fs::write(&log, bytes).unwrap();
+    match f.ask(&Request::Lock) {
+        Response::Err { code, message } => {
+            assert_eq!(code, code::VAULT);
+            assert!(message.starts_with("the key was wiped"), "{message}");
+        }
+        _ => panic!("expected an error"),
+    }
+    assert!(!f.agent.is_unlocked(), "the key is gone");
+}
