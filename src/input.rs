@@ -207,6 +207,21 @@ impl Passphrases {
         Ok(Passphrase::new(&bytes))
     }
 
+    /// Reads and throws away the passphrase line that `--passphrase-stdin`
+    /// promises, when an unlocked agent makes it unnecessary. The line is not
+    /// checked. Reading it keeps standard input laid out the same whether or
+    /// not an agent is up, and keeps the passphrase from reaching a child, a
+    /// template or a stored value (D-054). Without `--passphrase-stdin` there
+    /// is nothing to read.
+    pub fn discard(&mut self) -> Result<(), InputError> {
+        match &mut self.stdin {
+            Some(stdin) => read_line(stdin)?
+                .map(|_| ())
+                .ok_or(InputError::NoPassphraseOnStdin),
+            None => Ok(()),
+        }
+    }
+
     /// A new passphrase, for `init` and `passwd`. From a terminal it is asked
     /// for twice. From standard input it is one line. Either way it must pass
     /// [`check_new_passphrase`].

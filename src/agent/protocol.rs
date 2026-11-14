@@ -586,6 +586,7 @@ pub fn decode_response(kind: Kind, body: &[u8]) -> Result<Response, ProtocolErro
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::indexing_slicing,
+    clippy::panic,
     clippy::arithmetic_side_effects
 )]
 mod tests;
