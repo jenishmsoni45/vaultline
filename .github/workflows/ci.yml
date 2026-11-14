@@ -48,6 +48,16 @@ jobs:
           # user (docs/design.md section 12.2). Never set on a developer Mac.
           VAULTLINE_CI_SUDO: "1"
 
+      - name: No agent outlives the tests
+        if: always()
+        run: |
+          # Every test that starts an agent stops it (docs/design.md section
+          # 12.2). The bracket keeps pgrep from matching this very command.
+          if pgrep -fl '[v]aultline agent serve'; then
+            echo "error: a vaultline agent is still running after the tests" >&2
+            exit 1
+          fi
+
       - name: Install cargo-deny and cargo-audit
         uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
         with:
@@ -90,3 +100,13 @@ jobs:
           # Runs the tests that need sudo to create files owned by another
           # user (docs/design.md section 12.2). Never set on a developer Mac.
           VAULTLINE_CI_SUDO: "1"
+
+      - name: No agent outlives the tests
+        if: always()
+        run: |
+          # Every test that starts an agent stops it (docs/design.md section
+          # 12.2). The bracket keeps pgrep from matching this very command.
+          if pgrep -fl '[v]aultline agent serve'; then
+            echo "error: a vaultline agent is still running after the tests" >&2
+            exit 1
+          fi

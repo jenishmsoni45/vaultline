@@ -49,6 +49,48 @@ pub fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     needle.is_empty() || haystack.windows(needle.len()).any(|w| w == needle)
 }
 
+/// Whether the tests that need `sudo` may run. Only CI sets
+/// `VAULTLINE_CI_SUDO=1`; on the developer Mac they are skipped, with a note
+/// (`docs/design.md` §12.2).
+pub fn ci_sudo() -> bool {
+    if std::env::var("VAULTLINE_CI_SUDO").as_deref() == Ok("1") {
+        return true;
+    }
+    eprintln!("skipped: needs VAULTLINE_CI_SUDO=1, which only CI sets");
+    false
+}
+
+/// `sudo -n chown 0 <path>`, and the same back to the current user when the
+/// guard is dropped, so a temporary directory can still be removed.
+pub struct ChownBack {
+    path: PathBuf,
+    uid: u32,
+}
+
+impl Drop for ChownBack {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("sudo")
+            .args(["-n", "chown", &self.uid.to_string()])
+            .arg(&self.path)
+            .status();
+    }
+}
+
+/// Makes root the owner of `path`. Only call after [`ci_sudo`].
+pub fn sudo_chown_root(path: &Path) -> ChownBack {
+    let uid = nix::unistd::geteuid().as_raw();
+    let status = std::process::Command::new("sudo")
+        .args(["-n", "chown", "0"])
+        .arg(path)
+        .status()
+        .expect("sudo should start");
+    assert!(status.success(), "sudo chown failed");
+    ChownBack {
+        path: path.to_path_buf(),
+        uid,
+    }
+}
+
 /// The permission bits of a path, without following a final symlink.
 pub fn mode(path: &Path) -> u32 {
     fs::symlink_metadata(path)

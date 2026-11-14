@@ -4,6 +4,8 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod agent;
+mod audit;
 mod hardening;
 mod init;
 mod inject;

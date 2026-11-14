@@ -42,7 +42,10 @@ fn linux_runs_on_push_and_macos_on_pull_requests_only() {
 
 #[test]
 fn workflows_are_read_only_and_pin_actions_by_sha() {
-    for file in [".github/workflows/ci.yml"] {
+    for file in [
+        ".github/workflows/ci.yml",
+        ".github/workflows/fuzz-campaign.yml",
+    ] {
         let workflow = read(file);
         assert!(
             workflow.contains("permissions:\n  contents: read\n"),
@@ -164,4 +167,185 @@ fn license_files_exist_and_the_license_field_is_set() {
     assert!(read("Cargo.toml").contains("license = \"MIT OR Apache-2.0\""));
     assert!(read("LICENSE-MIT").starts_with("MIT License"));
     assert!(read("LICENSE-APACHE").contains("Apache License"));
+}
+
+// ---------------------------------------------------------------------------
+// Phase 4: the agent_message target, the fuzz campaign workflow, and the CI
+// check that no agent outlives the tests.
+
+/// The four targets of the campaign (D-018, D-035).
+const TARGETS: [&str; 4] = ["vault_file", "reference", "template", "agent_message"];
+
+/// P4-10: the `agent_message` target is registered and is a fuzz target. The
+/// 60-second smoke run happens in CI, because `make fuzz` runs every target
+/// that `cargo fuzz list` finds.
+#[test]
+fn fuzz_crate_has_the_agent_message_target() {
+    let manifest = read("fuzz/Cargo.toml");
+    assert!(manifest.contains("name = \"agent_message\""));
+    assert!(manifest.contains("path = \"fuzz_targets/agent_message.rs\""));
+    let source = read("fuzz/fuzz_targets/agent_message.rs");
+    assert!(source.contains("fuzz_target!"));
+    // It decodes arbitrary bytes as requests and as responses.
+    assert!(source.contains("decode_request") && source.contains("decode_response"));
+}
+
+/// P4-11: `fuzz-campaign.yml` exists, triggers only on `workflow_dispatch`, and
+/// has one job per target with `timeout-minutes` of 360 or less (D-035).
+#[test]
+fn the_campaign_starts_only_by_hand_with_one_job_per_target() {
+    let campaign = read(".github/workflows/fuzz-campaign.yml");
+
+    // The triggers: `on:` holds `workflow_dispatch` and nothing else.
+    let on: Vec<&str> = campaign
+        .lines()
+        .skip_while(|line| *line != "on:")
+        .skip(1)
+        .take_while(|line| line.starts_with("  ") || line.is_empty())
+        .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+        .collect();
+    assert_eq!(on, ["  workflow_dispatch:"], "no other trigger");
+    for trigger in ["push:", "pull_request", "schedule:", "cron:"] {
+        assert!(
+            !campaign.contains(trigger),
+            "the campaign must not use {trigger}"
+        );
+    }
+
+    // D-051: a duration input that defaults to, and is capped at, 20,400 s.
+    assert!(campaign.contains("default: \"20400\""));
+    assert!(campaign.contains("MAX_SECONDS: \"20400\""));
+
+    for target in TARGETS {
+        let job = job(&campaign, target);
+        assert!(!job.is_empty(), "no job for {target}");
+        let timeouts: Vec<u32> = job
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("timeout-minutes: "))
+            .map(|n| n.parse().expect("a number"))
+            .collect();
+        assert_eq!(timeouts.len(), 1, "{target} needs one timeout-minutes");
+        assert!(timeouts[0] <= 360, "{target}: {} minutes", timeouts[0]);
+        assert!(
+            job.contains(&format!("cargo +nightly fuzz run {target} ")),
+            "{target} must fuzz itself"
+        );
+        // The corpus, the crashes and the measured time are uploaded even if
+        // the fuzzer failed.
+        for what in ["corpus", "crashes", "time"] {
+            assert!(
+                job.contains(&format!("name: fuzz-{what}-{target}")),
+                "{target} must upload its {what}"
+            );
+        }
+        assert_eq!(job.matches("if: always()").count(), 3, "{target}");
+    }
+
+    // One job per target, plus the summary: nothing else.
+    let jobs = campaign
+        .lines()
+        .skip_while(|line| *line != "jobs:")
+        .filter(|line| line.starts_with("  ") && !line.starts_with("   ") && line.ends_with(':'))
+        .count();
+    assert_eq!(jobs, TARGETS.len() + 1);
+
+    // The summary runs the script on the downloaded times.
+    let summary = job(&campaign, "summary");
+    assert!(summary.contains("scripts/fuzz-cpu-hours.sh"));
+    assert!(summary.contains("fuzz-time-*"));
+    assert!(summary.contains("if: always()"));
+}
+
+/// A step after the tests fails if any `vaultline agent serve` is still
+/// running, in both CI jobs (P4-12, `docs/phases.md` rule 3).
+#[test]
+fn both_ci_jobs_fail_if_an_agent_outlives_the_tests() {
+    let ci = read(".github/workflows/ci.yml");
+    for name in ["linux", "macos"] {
+        let job = job(&ci, name);
+        let test = job.find("run: make test").expect("a test step");
+        let check = job
+            .find("pgrep -fl '[v]aultline agent serve'")
+            .unwrap_or_else(|| panic!("the {name} job has no leftover-agent check"));
+        assert!(check > test, "the {name} check must come after the tests");
+        assert!(job.contains("No agent outlives the tests"));
+    }
+}
+
+/// The script that adds up CPU-hours (D-052): seconds times cores over 3600
+/// per target, and the total, and it refuses what it can't read.
+#[test]
+fn the_cpu_hours_script_adds_up_what_the_jobs_measured() {
+    use std::process::Command;
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/fuzz-cpu-hours.sh");
+    let run = |dir: &Path| {
+        Command::new("sh")
+            .arg(&script)
+            .arg(dir)
+            .output()
+            .expect("sh should start")
+    };
+    let write = |root: &Path, target: &str, seconds: &str, cores: &str| {
+        let dir = root.join(format!("fuzz-time-{target}"));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("seconds"), format!("{seconds}\n")).unwrap();
+        fs::write(dir.join("cores"), format!("{cores}\n")).unwrap();
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    write(tmp.path(), "vault_file", "3600", "4");
+    write(tmp.path(), "template", "1800", "4");
+    write(tmp.path(), "agent_message", "20400", "4");
+    let out = run(tmp.path());
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("vault_file: 3600 s on 4 cores = 4.00 CPU-hours"),
+        "{text}"
+    );
+    assert!(
+        text.contains("template: 1800 s on 4 cores = 2.00 CPU-hours"),
+        "{text}"
+    );
+    assert!(
+        text.contains("agent_message: 20400 s on 4 cores = 22.67 CPU-hours"),
+        "{text}"
+    );
+    assert!(
+        text.trim_end().ends_with("total: 28.67 CPU-hours"),
+        "{text}"
+    );
+
+    // Nothing to add up, and files that aren't numbers, are errors.
+    let empty = tempfile::tempdir().unwrap();
+    assert!(!run(empty.path()).status.success());
+    for bad in ["", "abc", "12.5", "-3"] {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "reference", bad, "4");
+        let out = run(dir.path());
+        assert!(!out.status.success(), "{bad:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("whole number"),
+            "{bad:?}"
+        );
+        assert!(out.stdout.is_empty(), "no partial figure for {bad:?}");
+    }
+    // A missing file is an error too.
+    let dir = tempfile::tempdir().unwrap();
+    fs::create_dir_all(dir.path().join("fuzz-time-template")).unwrap();
+    assert!(!run(dir.path()).status.success());
+    // And so is a missing directory, or none given.
+    assert!(!run(Path::new("/nonexistent-fuzz-times")).status.success());
+    assert!(
+        !Command::new("sh")
+            .arg(&script)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
 }

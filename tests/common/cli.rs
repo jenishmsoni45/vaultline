@@ -14,16 +14,20 @@
 //!   fails, so nothing is left running.
 //! - After every command, stderr is checked for the passphrase and for every
 //!   fake secret the test registered (`docs/phases.md` rule 4).
+//! - Every agent a sandbox starts is stopped when the sandbox is dropped, and
+//!   the drop waits for the process to exit, so a test never leaves an agent
+//!   behind, even when it fails (`docs/design.md` §12.2, NFR-17).
 
 #![allow(dead_code)]
 
 use std::cell::RefCell;
 use std::fs;
 use std::io::{Read, Write};
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -39,6 +43,11 @@ pub const TIMEOUT: Duration = Duration::from_secs(120);
 
 /// A passphrase that passes the 12-character rule.
 pub const PASSPHRASE: &str = "fake-passphrase-for-tests";
+
+/// Held by every test that runs `passwd` or `rotate`, which always write the
+/// default 256 MiB Argon2id parameters (D-040), so that they never run at the
+/// same time.
+pub static HEAVY: Mutex<()> = Mutex::new(());
 
 /// The result of one command.
 pub struct Ran {
@@ -97,6 +106,8 @@ pub struct Sandbox {
     pub passphrase: String,
     vault: Option<Vault>,
     secrets: RefCell<Vec<String>>,
+    /// Every agent this sandbox started, stopped again on drop.
+    agents: RefCell<Vec<Pid>>,
 }
 
 impl Sandbox {
@@ -121,6 +132,7 @@ impl Sandbox {
             passphrase: PASSPHRASE.to_string(),
             vault: None,
             secrets: RefCell::new(Vec::new()),
+            agents: RefCell::new(Vec::new()),
         };
         sandbox.register(PASSPHRASE);
         sandbox
@@ -130,6 +142,22 @@ impl Sandbox {
     /// (D-020), created through the library like any other vault.
     pub fn with_vault() -> Sandbox {
         Self::with_vault_params(CHEAP)
+    }
+
+    /// A sandbox whose vault directory has this single-component name, for
+    /// tests that need a long path (the socket's path is limited).
+    pub fn with_vault_in(dir_name: &str) -> Sandbox {
+        let mut sandbox = Self::new();
+        sandbox.dir = sandbox
+            .tmp
+            .path()
+            .canonicalize()
+            .expect("the sandbox")
+            .join(dir_name);
+        sandbox.vault = Some(
+            Vault::create(&sandbox.dir, &pass(&sandbox.passphrase), CHEAP).expect("a new vault"),
+        );
+        sandbox
     }
 
     pub fn with_vault_params(kdf: KdfParams) -> Sandbox {
@@ -224,6 +252,129 @@ impl Sandbox {
             );
         }
     }
+}
+
+impl Sandbox {
+    /// The agent's socket.
+    pub fn socket(&self) -> PathBuf {
+        self.dir.join("agent.sock")
+    }
+
+    /// `unlock`, with the passphrase on stdin. A started agent is remembered,
+    /// so that dropping the sandbox stops it.
+    pub fn unlock(&self, extra: &[&str]) -> Ran {
+        let mut args = vec!["unlock"];
+        args.extend_from_slice(extra);
+        let ran = self.run_pass(&args, b"");
+        self.track_agent();
+        ran
+    }
+
+    /// Remembers the agent that is running now, if any, so that dropping the
+    /// sandbox stops it. For tests that start `unlock` some other way.
+    pub fn track_agent(&self) -> Option<Pid> {
+        let pid = self.agent_pid()?;
+        let mut agents = self.agents.borrow_mut();
+        if !agents.contains(&pid) {
+            agents.push(pid);
+        }
+        Some(pid)
+    }
+
+    /// The process ID of the agent behind the socket, from the socket's peer
+    /// credentials, so that no process-ID file is needed (D-055).
+    pub fn agent_pid(&self) -> Option<Pid> {
+        peer_pid(&UnixStream::connect(self.socket()).ok()?)
+    }
+
+    /// Waits until `condition` holds, for at most 20 seconds.
+    pub fn wait_for(&self, what: &str, condition: impl Fn() -> bool) {
+        let started = Instant::now();
+        while !condition() {
+            assert!(
+                started.elapsed() < Duration::from_secs(20),
+                "timed out waiting for {what}"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+
+    /// Waits until the agent process has exited and its socket is gone.
+    pub fn wait_for_agent_exit(&self, pid: Pid) {
+        self.wait_for("the agent to exit", || !is_alive(pid));
+        assert!(!self.socket().exists(), "the socket is still there");
+    }
+
+    /// Every record of the audit log, decoded.
+    pub fn audit_records(&self) -> Vec<vaultline::audit::Record> {
+        use vaultline::audit::{HEADER_LEN, RECORD_LEN, Record};
+        let log = fs::read(self.dir.join("audit.log")).expect("the audit log");
+        log[HEADER_LEN..]
+            .chunks(RECORD_LEN)
+            .map(|bytes| Record::decode(bytes).expect("a valid record"))
+            .collect()
+    }
+
+    /// The events of the audit log, in order.
+    pub fn audit_events(&self) -> Vec<vaultline::audit::Event> {
+        self.audit_records().iter().map(|r| r.event).collect()
+    }
+
+    /// The `item_id` of a stored item, read through the library.
+    pub fn item_id(&self, project: &str, item: &str) -> [u8; 16] {
+        Vault::open(&self.dir, &pass(&self.passphrase))
+            .expect("open the vault")
+            .items()
+            .expect("the items")
+            .into_iter()
+            .find(|i| i.project == name(project) && i.item == name(item))
+            .expect("the item exists")
+            .item_id
+    }
+}
+
+impl Drop for Sandbox {
+    fn drop(&mut self) {
+        for pid in self.agents.borrow().iter() {
+            if !is_alive(*pid) {
+                continue;
+            }
+            let mut command = self.command();
+            command
+                .args(["agent", "stop"])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let _ = command.status();
+            let started = Instant::now();
+            while is_alive(*pid) && started.elapsed() < Duration::from_secs(5) {
+                thread::sleep(Duration::from_millis(25));
+            }
+            if is_alive(*pid) {
+                let _ = kill(*pid, Signal::SIGKILL);
+            }
+        }
+    }
+}
+
+/// Whether a process exists.
+pub fn is_alive(pid: Pid) -> bool {
+    kill(pid, None).is_ok()
+}
+
+/// The process ID of the process at the other end of a Unix socket.
+#[cfg(target_os = "linux")]
+pub fn peer_pid(stream: &UnixStream) -> Option<Pid> {
+    use nix::sys::socket::{getsockopt, sockopt::PeerCredentials};
+    getsockopt(stream, PeerCredentials)
+        .ok()
+        .map(|c| Pid::from_raw(c.pid()))
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn peer_pid(stream: &UnixStream) -> Option<Pid> {
+    use nix::sys::socket::{getsockopt, sockopt::LocalPeerPid};
+    getsockopt(stream, LocalPeerPid).ok().map(Pid::from_raw)
 }
 
 /// Spawns, feeds standard input from a thread so a full pipe can't block, and

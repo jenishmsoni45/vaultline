@@ -1,9 +1,9 @@
 //! The `vaultline` command line.
 //!
 //! The command tree is `docs/design.md` §4. `init`, `set`, `get`, `list`, `rm`,
-//! `passwd`, `rotate`, `run` and `inject` work in-process (Phase 3, in
-//! `vaultline::commands`). The agent and audit commands are stubs that print
-//! `not implemented yet` and exit 1 until Phase 4.
+//! `passwd`, `rotate`, `run` and `inject` are in `vaultline::commands`, and
+//! so are the agent commands (`unlock`, `lock`, `agent stop`, hidden
+//! `agent serve`) and `audit`.
 
 #![forbid(unsafe_code)]
 
@@ -39,8 +39,6 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-// The agent commands carry options that Phase 4 reads.
-#[allow(dead_code)]
 enum Command {
     /// Create the vault directory and an empty vault
     Init,
@@ -128,11 +126,14 @@ enum AgentCommand {
 
     /// The agent process itself, started by `unlock`
     #[command(hide = true)]
-    Serve,
+    Serve {
+        /// Wipe the key after this much idle time: <n>s, <n>m or <n>h
+        #[arg(long, value_name = "DURATION")]
+        idle_timeout: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
-#[allow(dead_code)]
 enum AuditCommand {
     /// Verify the chain, the MACs and the head
     Verify {
@@ -192,10 +193,23 @@ fn dispatch(cli: Cli) -> Result<u8, CliError> {
             &mut passphrases(from_stdin)?,
             input.as_deref(),
         )),
-        Command::Unlock { .. } | Command::Lock | Command::Agent { .. } | Command::Audit { .. } => {
-            say("vaultline: not implemented yet");
-            Ok(EXIT_ERROR)
-        }
+        Command::Unlock { idle_timeout } => done(commands::unlock(
+            &mut passphrases(from_stdin)?,
+            idle_timeout.as_deref(),
+        )),
+        Command::Lock => done(commands::lock()),
+        Command::Agent { command } => match command {
+            AgentCommand::Stop => done(commands::agent_stop()),
+            AgentCommand::Serve { idle_timeout } => {
+                done(commands::agent_serve(idle_timeout.as_deref()))
+            }
+        },
+        Command::Audit { command } => match command {
+            AuditCommand::Verify { expect } => {
+                commands::audit_verify(&mut passphrases(from_stdin)?, expect.as_deref())
+            }
+            AuditCommand::Head => done(commands::audit_head(&mut passphrases(from_stdin)?)),
+        },
     }
 }
 

@@ -37,4 +37,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "agent_message"
+path = "fuzz_targets/agent_message.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

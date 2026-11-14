@@ -6,18 +6,15 @@
 //! key derivation or leaves the vault alone.
 //!
 //! US-6 AC1 is "asks for the current passphrase even when an agent is
-//! unlocked". There is no agent until Phase 4, so what is tested here is that
-//! the current passphrase is always required; the agent half arrives with it.
+//! unlocked". What is tested here is that the current passphrase is always
+//! required; `agent.rs` does it with an unlocked agent, and also tests that
+//! `rotate` locks a running agent (US-7 AC4).
 
-use std::sync::Mutex;
-
+use vaultline::audit::Event;
 use vaultline::vault::KdfParams;
 use vaultline::vault::format::{self, HEADER_LEN};
 
-use crate::common::cli::{Sandbox, assert_no_plaintext_under};
-
-/// Held by the two tests that use the default parameters.
-static HEAVY: Mutex<()> = Mutex::new(());
+use crate::common::cli::{HEAVY, Sandbox, assert_no_plaintext_under};
 
 const NEW_PASSPHRASE: &str = "a-new-fake-passphrase";
 
@@ -81,6 +78,21 @@ fn passwd_changes_the_passphrase_and_leaves_every_record_alone() {
         format!("{NEW_PASSPHRASE}\n").as_bytes(),
     );
     assert_eq!(ran.stdout_str(), second);
+
+    // The audit log records it: an unlock, then the passwd. The audit key was
+    // left alone (D-034), so the whole log still verifies.
+    let events = sb.audit_events();
+    assert!(
+        events
+            .windows(2)
+            .any(|pair| pair == [Event::Unlock, Event::Passwd]),
+        "{events:?}"
+    );
+    let ran = sb.run(
+        &["audit", "verify"],
+        format!("{NEW_PASSPHRASE}\n").as_bytes(),
+    );
+    assert!(ran.ok().stdout_str().contains("audit log verified"));
 }
 
 /// AC3: the new passphrase must be at least 12 characters.
@@ -185,6 +197,18 @@ fn rotate_replaces_every_key_and_encrypts_everything_again() {
         ran.ok();
         assert_eq!(&ran.stdout_str(), secret);
     }
+
+    // US-7 AC3: the audit log still verifies after `rotate`, because the audit
+    // key is kept and only wrapped again (D-034), and `rotate` is in it.
+    let ran = sb.run_pass(&["audit", "verify"], b"");
+    assert!(ran.ok().stdout_str().contains("audit log verified"));
+    let events = sb.audit_events();
+    assert!(
+        events
+            .windows(2)
+            .any(|pair| pair == [Event::Unlock, Event::Rotate]),
+        "{events:?}"
+    );
 
     // S6 after rotate: no secret in any file the commands touched.
     let secret_refs: Vec<&str> = secrets.iter().map(String::as_str).collect();

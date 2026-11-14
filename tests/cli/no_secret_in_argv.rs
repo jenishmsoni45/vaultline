@@ -78,3 +78,46 @@ fn a_running_vaultline_shows_no_secret_in_its_arguments() {
     // The reference stays in the environment, never in the arguments either.
     assert!(!shown.contains("vault://"), "{shown}");
 }
+
+/// P4-9, C12: the agent's arguments contain no passphrase. The passphrase
+/// reaches it through its standard input pipe, and `ps` shows only the
+/// arguments. On macOS `ps -E` shows the environment too, and it holds no
+/// passphrase either. (On Linux the agent is non-dumpable, which hides its
+/// environment even from its owner; `hardening.rs` checks that.)
+#[test]
+fn the_agent_has_no_passphrase_in_its_arguments_or_environment() {
+    let sb = Sandbox::with_vault();
+    sb.secret("v", "demo", "db", "password");
+    sb.unlock(&["--idle-timeout", "10m"]).ok();
+    let pid = sb.agent_pid().expect("the agent");
+
+    let ps = |extra: &[&str]| {
+        let output = Command::new("ps")
+            .args(extra)
+            .args(["-ww", "-o", "args=", "-p", &pid.to_string()])
+            .output()
+            .expect("ps should start");
+        assert!(output.status.success(), "ps failed");
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let args = ps(&[]);
+    assert!(args.contains("agent serve"), "{args}");
+    assert!(args.contains("--idle-timeout 600s"), "{args}");
+    assert!(
+        !args.contains(&sb.passphrase),
+        "the passphrase is in the arguments"
+    );
+
+    #[cfg(target_os = "macos")]
+    {
+        let with_environment = ps(&["-E"]);
+        assert!(
+            with_environment.contains("agent serve"),
+            "{with_environment}"
+        );
+        assert!(
+            !with_environment.contains(&sb.passphrase),
+            "the passphrase is in the agent's environment"
+        );
+    }
+}

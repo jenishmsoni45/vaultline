@@ -11,5 +11,6 @@ mod kdf_bounds;
 mod limits;
 mod no_plaintext_in_vault;
 mod permissions;
+mod planted_socket;
 mod secret_types;
 mod versions;

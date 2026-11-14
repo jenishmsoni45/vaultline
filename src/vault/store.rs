@@ -29,6 +29,8 @@ use crate::paths::{self, FILE_MODE, PathError};
 pub const VAULT_FILE: &str = "vault";
 /// The writer lock's name inside the vault directory.
 pub const LOCK_FILE: &str = "lock";
+/// The agent's lock file: held with `flock` for as long as an agent runs.
+pub const AGENT_LOCK_FILE: &str = "agent.lock";
 /// Prefix of the temporary files used by the atomic replace.
 pub const TMP_PREFIX: &str = ".vault.tmp-";
 /// How long a writer waits for the lock before giving up (D-037).
@@ -121,6 +123,25 @@ fn lock_with_wait(dir: &Path, wait: Duration) -> Result<WriterLock, Error> {
             }
             Err((_, errno)) => return Err(io("lock", &path, io::Error::from(errno))),
         }
+    }
+}
+
+/// Proof that this process is the one agent for a vault directory. The lock
+/// is released when it is dropped, or when the process ends, however it ends.
+pub struct AgentLock {
+    _lock: Flock<File>,
+}
+
+/// Takes `agent.lock` without waiting (design §8). `None` means another agent
+/// holds it. Whoever holds this lock is the only process allowed to remove a
+/// stale `agent.sock`, which settles any race over it.
+pub fn try_lock_agent(dir: &Path) -> Result<Option<AgentLock>, Error> {
+    let path = dir.join(AGENT_LOCK_FILE);
+    let file = open_or_create_private(&path)?;
+    match Flock::lock(file, FlockArg::LockExclusiveNonblock) {
+        Ok(lock) => Ok(Some(AgentLock { _lock: lock })),
+        Err((_, errno)) if errno == Errno::EWOULDBLOCK => Ok(None),
+        Err((_, errno)) => Err(io("lock", &path, io::Error::from(errno))),
     }
 }
 
@@ -336,6 +357,24 @@ mod tests {
         let tmp = private_dir();
         drop(lock(tmp.path()).unwrap());
         assert!(lock_with_wait(tmp.path(), Duration::ZERO).is_ok());
+    }
+
+    #[test]
+    fn the_agent_lock_is_exclusive_and_released_on_drop() {
+        let tmp = private_dir();
+        let first = try_lock_agent(tmp.path()).unwrap();
+        assert!(first.is_some());
+        assert!(try_lock_agent(tmp.path()).unwrap().is_none());
+        drop(first);
+        assert!(try_lock_agent(tmp.path()).unwrap().is_some());
+    }
+
+    #[test]
+    fn the_agent_lock_is_independent_of_the_writer_lock() {
+        let tmp = private_dir();
+        let _agent = try_lock_agent(tmp.path()).unwrap().unwrap();
+        assert!(lock_with_wait(tmp.path(), Duration::ZERO).is_ok());
+        assert!(tmp.path().join(AGENT_LOCK_FILE).exists());
     }
 
     #[test]

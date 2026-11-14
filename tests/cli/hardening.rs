@@ -70,3 +70,33 @@ fn hardening_applies_when_a_vault_is_opened_too() {
     ran.ok();
     assert_eq!(ran.stdout_str(), "0\n");
 }
+
+/// P4-9, NFR-7, C11: on Linux the agent's core-dump limit is 0 and it is
+/// non-dumpable, which makes its `/proc/<pid>/environ` unreadable to other
+/// processes of the same user, this test included. (macOS has no such
+/// interface, so the limit is checked there through the child of `run`, above.)
+#[cfg(target_os = "linux")]
+#[test]
+fn the_agent_has_no_core_dumps_and_is_non_dumpable_on_linux() {
+    let sb = Sandbox::with_vault();
+    sb.secret("key", "demo", "api", "key");
+    sb.unlock(&[]).ok();
+    let pid = sb.agent_pid().expect("the agent");
+
+    let limits = std::fs::read_to_string(format!("/proc/{pid}/limits")).expect("limits");
+    let core = limits
+        .lines()
+        .find(|line| line.starts_with("Max core file size"))
+        .expect("a core file size line");
+    let numbers: Vec<&str> = core.split_whitespace().skip(4).take(2).collect();
+    assert_eq!(numbers, ["0", "0"], "{core}");
+
+    let denied = std::fs::read(format!("/proc/{pid}/environ"));
+    assert_eq!(
+        denied.map_err(|e| e.kind()),
+        Err(std::io::ErrorKind::PermissionDenied),
+        "the agent's environment is readable"
+    );
+    // The control: this process can read its own.
+    std::fs::read("/proc/self/environ").expect("our own environment");
+}

@@ -4,21 +4,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
-/// Every invocation that must still reach a stub: the agent and audit commands,
-/// which arrive in Phase 4. Everything else is implemented (Phase 3) and has
-/// its own tests.
-const STUBBED: &[&[&str]] = &[
-    &["unlock"],
-    &["unlock", "--idle-timeout", "5m"],
-    &["--passphrase-stdin", "unlock"],
-    &["lock"],
-    &["agent", "stop"],
-    &["agent", "serve"],
-    &["audit", "verify"],
-    &["audit", "verify", "--expect", "1:00"],
-    &["audit", "head"],
-];
-
 /// Every command path that must answer `--help`, including the hidden one.
 const HELP: &[&[&str]] = &[
     &[],
@@ -78,18 +63,38 @@ fn non_unix_targets_fail_to_compile() {
     }
 }
 
+/// Phase 4 replaced the stubs: the agent and audit commands are real. In an
+/// empty sandbox, with no vault and no agent, each one says what is missing.
+/// (The Phase 1 version of this test ran them against the real environment;
+/// these commands now act on a vault, so they run in a sandbox.)
 #[test]
-fn the_agent_and_audit_commands_are_still_stubs() {
-    for args in STUBBED {
-        let out = vaultline(args);
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        assert_eq!(out.status.code(), Some(1), "exit code of {args:?}");
-        assert!(
-            stderr.contains("not implemented yet"),
-            "stderr of {args:?} was: {stderr}"
-        );
-        assert!(out.stdout.is_empty(), "stdout of {args:?} must be empty");
+fn the_agent_and_audit_commands_are_implemented() {
+    use crate::common::cli::Sandbox;
+    let sb = Sandbox::new();
+    for args in [
+        &["unlock"][..],
+        &["unlock", "--idle-timeout", "5m"],
+        &["audit", "verify"],
+        &["audit", "head"],
+    ] {
+        let ran = sb.run(args, b"");
+        ran.fails_with("there is no vault");
+        assert!(!ran.stderr_str().contains("not implemented"), "{args:?}");
     }
+    for args in [&["lock"][..], &["agent", "stop"]] {
+        let ran = sb.run(args, b"");
+        ran.ok();
+        assert!(ran.stderr_str().contains("no agent is running"), "{args:?}");
+    }
+    // A mistyped anchor is refused before anything else happens.
+    sb.run(&["audit", "verify", "--expect", "1:00"], b"")
+        .fails_with("an anchor looks like COUNT:HASH");
+    // `agent serve` with nothing on stdin reports its failure and exits 1.
+    let ran = sb.run(&["agent", "serve"], b"");
+    ran.code(1);
+    assert_eq!(ran.stdout, [1], "the status byte is 1: not ready");
+    assert!(!ran.stderr_str().contains("not implemented"));
+    assert!(!sb.dir.join("agent.sock").exists());
 }
 
 #[test]
