@@ -266,13 +266,19 @@ impl Sandbox {
         let mut args = vec!["unlock"];
         args.extend_from_slice(extra);
         let ran = self.run_pass(&args, b"");
-        if let Some(pid) = self.agent_pid() {
-            let mut agents = self.agents.borrow_mut();
-            if !agents.contains(&pid) {
-                agents.push(pid);
-            }
-        }
+        self.track_agent();
         ran
+    }
+
+    /// Remembers the agent that is running now, if any, so that dropping the
+    /// sandbox stops it. For tests that start `unlock` some other way.
+    pub fn track_agent(&self) -> Option<Pid> {
+        let pid = self.agent_pid()?;
+        let mut agents = self.agents.borrow_mut();
+        if !agents.contains(&pid) {
+            agents.push(pid);
+        }
+        Some(pid)
     }
 
     /// The process ID of the agent behind the socket, from the socket's peer

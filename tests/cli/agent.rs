@@ -251,10 +251,12 @@ fn ctrl_c_in_the_terminal_does_not_stop_the_agent() {
     let mut unlock = Live::start(command);
     let unlock_group = unlock.pid();
     unlock.write_stdin(format!("{}\n", sb.passphrase).as_bytes());
+    // Remembered at once, so that the sandbox stops the agent even if an
+    // assertion below fails.
     let pid = {
         let started = std::time::Instant::now();
         loop {
-            if let Some(pid) = sb.agent_pid() {
+            if let Some(pid) = sb.track_agent() {
                 break pid;
             }
             assert!(started.elapsed() < TIMEOUT, "the agent never appeared");
@@ -262,9 +264,6 @@ fn ctrl_c_in_the_terminal_does_not_stop_the_agent() {
         }
     };
     unlock.finish().ok();
-    // Run it again so that the sandbox remembers the pid and stops the agent;
-    // it only says "already unlocked".
-    sb.unlock(&[]).ok();
 
     let agent_group = getpgid(Some(pid)).expect("the agent's process group");
     assert_ne!(agent_group, unlock_group, "the agent has its own group");
