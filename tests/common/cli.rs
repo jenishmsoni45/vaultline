@@ -144,6 +144,22 @@ impl Sandbox {
         Self::with_vault_params(CHEAP)
     }
 
+    /// A sandbox whose vault directory has this single-component name, for
+    /// tests that need a long path (the socket's path is limited).
+    pub fn with_vault_in(dir_name: &str) -> Sandbox {
+        let mut sandbox = Self::new();
+        sandbox.dir = sandbox
+            .tmp
+            .path()
+            .canonicalize()
+            .expect("the sandbox")
+            .join(dir_name);
+        sandbox.vault = Some(
+            Vault::create(&sandbox.dir, &pass(&sandbox.passphrase), CHEAP).expect("a new vault"),
+        );
+        sandbox
+    }
+
     pub fn with_vault_params(kdf: KdfParams) -> Sandbox {
         let mut sandbox = Self::new();
         sandbox.vault = Some(
