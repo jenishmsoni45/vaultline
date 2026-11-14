@@ -553,3 +553,78 @@ None of these change an answer above. Each fills in a detail the answers left op
 - **Options:** A: count Unicode characters, and require valid UTF-8 at `init` and `passwd`. B: count bytes.
 - **Decision:** A.
 - **Design:** `init` and `passwd` reject a new passphrase that isn't valid UTF-8, or that has fewer than 12 characters (Unicode scalar values), and the error says which. Unlocking an existing vault takes any bytes, exactly as entered (`vault-format.md` §3), so nothing already created is locked out. Counting bytes was rejected because a short non-ASCII passphrase would pass a rule that says characters.
+
+## Phase 4: agent and audit log
+
+Five questions came up while reading the Phase 4 docs. The docs are silent on each, or two of them pull against each other. The owner answered all five, and the first four are D-047 to D-050. None of the answers contradicts a doc, so no doc was changed. Each one fills a gap, and `design.md` §9, §8 and §12.6 would gain a sentence if the owner wants it written there.
+
+### D-047 · What an audit append checks, and what happens when it can't proceed (fills a gap in `design.md` §9 and §11)
+
+- **Question:** The docs say an append writes the record and then replaces the head, and that a missing log is not recreated. They don't say what a command does when the log is missing, cut mid-record, or out of step with the head. One hole: someone cuts k records off the log, the next command appends a record and replaces the head, and the cut is hidden for good, because the log and the head now agree.
+- **Options:**
+  - A: check the log and head before every append, and fail closed.
+  - B: the same checks, but warn and carry on without a record.
+  - C: no check; append using only the last record's hash.
+- **Decision:** A.
+- **Design:**
+  - **Checks before an append,** all cheap because they read only the tail: the log is 26 + n × 105 bytes, its header is valid, the last record's `seq` is n − 1 and its `prev_hash` and MAC are valid, and the head's magic, version, `vault_id` and MAC are valid, with `count` at most n and `last_hash` equal to the hash of record `count − 1`. A head that is one record behind the log is fine (`vault-format.md` §5.4).
+  - **On failure** the command fails with exit 1 and an error that names the problem and points to `vaultline audit verify`. It does that before it reads a secret or changes the vault, so nothing is read or written without a record.
+  - **`audit verify`** still reports the damage and exits 1. When the log can't be appended to, it skips its own `verify` record and says so.
+  - **Cost:** a damaged log blocks every command except `audit verify`, `audit head`, `init`-time checks and the commands that don't touch the vault. That is the point: nobody gets silent access by damaging the log.
+- **Why:** B and C leave a way to read secrets, or to hide a truncation, with no trace. This keeps S8's truncation guarantee for the commands that come after the cut, not only for `verify`.
+
+### D-048 · The `lock` record when `rotate` locks the agent (resolves a clash between `design.md` §4, §8 and §9)
+
+- **Question:** `rotate` replaces the master key and then tells a running agent to lock. The agent can no longer verify the vault, so it can't get the audit key, and `design.md` §8 says it holds only the master key. But Lock is supposed to append a `lock` record.
+- **Options:**
+  - A: the agent wipes its key and appends nothing in that case.
+  - B: `rotate` sends Lock before it replaces the vault.
+  - C: the agent also keeps the audit key in memory.
+- **Decision:** A.
+- **Design:** Lock appends `lock` (detail 0) when the vault still verifies under the agent's master key. When it doesn't, for example after a `rotate`, the agent wipes its key and replies OK without a record. The `rotate` record, already written by the command, explains the lock. The same applies to any other path where the agent loses the ability to read the vault: it wipes, it never skips the wipe.
+- **Why:** A needs no doc change and keeps the agent's memory as small as the docs promise. B changes `design.md` §4 and locks the agent for a rotate that may still fail. C adds a second secret to the agent.
+
+### D-049 · A locked agent's idle timer (fills a gap in `design.md` §8, `architecture.md` §4 and D-037)
+
+- **Question:** `lock` leaves the agent running for a later `unlock`, but D-037 says nothing lingers. Does the idle timer apply to a locked agent?
+- **Options:**
+  - A: the same timer runs while locked; when it fires the agent removes its socket and exits, with no record.
+  - B: a locked agent waits until `agent stop`.
+- **Decision:** A.
+- **Design:** The timer starts when the agent is created, restarts on each accepted request that resets it (`design.md` §8), and is the same length whether the agent is locked or not. A locked agent that times out has no key and so can't append `idle-timeout`; it exits without one. An unlocked agent that times out appends `idle-timeout` first, as documented. `Unlock` on a locked agent restarts the timer.
+- **Why:** B would leave a process running with no limit, against the standing rule that nothing keeps running (D-020).
+
+### D-050 · `unlock --idle-timeout` when an agent is already running (fills a gap in `design.md` §4 and §8.1)
+
+- **Question:** The Unlock message (§8.1, kind 5) holds only the passphrase, so it can't change the timeout of a running agent. What does `unlock --idle-timeout D` do when an agent is already running?
+- **Options:**
+  - A: refuse with an error that says to run `agent stop` first.
+  - B: unlock and print a note that the old timeout stays.
+  - C: add a timeout field to Unlock (a protocol change).
+- **Decision:** A.
+- **Design:** With an agent running and `--idle-timeout` given, `unlock` fails with exit 1 before it asks for the passphrase, and says: run `vaultline agent stop`, then `vaultline unlock --idle-timeout D`. With no flag, a locked agent is unlocked and keeps the timeout it started with. An agent that is already unlocked prints "already unlocked" and changes nothing, whether or not the flag was given... except that the flag still produces the same refusal, so a user never believes a timeout was changed when it wasn't.
+- **Why:** Nothing is silently ignored, and the protocol stays as `design.md` §8.1 fixes it.
+
+### D-051 · How long the fuzz campaign's jobs run (amends the wording "up to 6 hours" in D-018, `design.md` §12.6 and NFR-18)
+
+- **Question:** GitHub's 6-hour limit is for the whole job, which also builds the fuzzer and uploads the corpus. If the fuzzer ran the full 6 hours, the job would be killed before the upload.
+- **Options:**
+  - A: a `duration` input in seconds, defaulting to and capped at 20,400 s (5 h 40 min), with `timeout-minutes: 360`.
+  - B: 21,600 s (6 h).
+  - C: 10,800 s (3 h) default and cap.
+- **Decision:** A.
+- **Design:** `fuzz-campaign.yml` takes a `duration` input in seconds. The default is 20,400, and a larger value is rejected at the start of each job. Each job has `timeout-minutes: 360`. The upload steps run with `if: always()`. The CPU-hours script counts measured run time, never the requested time.
+- **Why:** The 20 minutes left cover setup, the build and the upload. B can lose the corpus and any crash files. C collects about half the CPU-hours planned.
+- **Doc wording:** `design.md` §12.6 and NFR-18 keep saying "up to 6 hours"; the real fuzzing time is 5 h 40 min at most. The owner can have that wording changed.
+
+### D-052 · Details Claude chose in Phase 4 (to review in the PR)
+
+None of these changes an answer above. Each fills in a detail the docs leave open. An objection in the PR review becomes a new decision.
+
+- **Passwd and rotate unlock too.** Both open the vault in-process, so each one appends `unlock` (detail 0) before its own record, and a wrong passphrase raises the failed-unlock counter like any other failed unlock. `init` appends only `init`.
+- **Which failures count.** The failed-unlock counter goes up only when the passphrase fails to unwrap the master key (`vault::Error::Unlock`), not for format, path or I/O errors.
+- **`agent stop` and signals.** An unlocked agent that stops, whether through `agent stop` or SIGTERM or SIGINT sent to it, appends `lock` with detail 1. A locked agent stops without a record (D-048).
+- **Wire error codes.** The docs give `code:u16` and a message but no values. `agent/protocol.rs` defines: 1 locked, 2 not found, 3 bad request, 4 vault or audit error, 5 too large, 6 busy. A client never shows a code to the user; it shows the message.
+- **Handshake channel.** `unlock` reads the agent's single status byte from the agent's stdout pipe (0 ready, otherwise an error code), and the agent's stderr pipe carries its error text, which `unlock` prints, since it never contains a secret.
+- **CPU-hours.** `scripts/fuzz-cpu-hours.sh` reads one `<target>.seconds` file per job, written by the job from the measured run time, and multiplies each by the runner's core count (written to a second file by the same job, since libFuzzer runs as one process). It prints the sum in CPU-hours, and each job's share.
+- **New dependency features, no new crates.** `nix` gains `socket`, `poll` and `net` (peer credentials, `poll`, `umask` and the listener's socket options) and `signal-hook` stays as it is. Each is justified in the PR.
