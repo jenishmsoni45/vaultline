@@ -6,8 +6,9 @@
 //! key derivation or leaves the vault alone.
 //!
 //! US-6 AC1 is "asks for the current passphrase even when an agent is
-//! unlocked". There is no agent until Phase 4, so what is tested here is that
-//! the current passphrase is always required; the agent half arrives with it.
+//! unlocked". What is tested here is that the current passphrase is always
+//! required; `agent.rs` does it with an unlocked agent, and also tests that
+//! `rotate` locks a running agent (US-7 AC4).
 
 use vaultline::audit::Event;
 use vaultline::vault::KdfParams;

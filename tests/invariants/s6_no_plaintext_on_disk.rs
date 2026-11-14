@@ -8,10 +8,14 @@
 //! the design guarantees by construction that vaultline writes only inside
 //! `VAULTLINE_DIR` (`docs/architecture.md` §7).
 //!
+//! §12.3 asks for every command both in-process and through an agent: the first
+//! test is in-process, the second goes through an unlocked agent, and both end
+//! with the same scan.
+//!
 //! `rotate` is part of §12.3's list. It always runs Argon2id at the default
-//! parameters (D-040), so it runs once in this phase, in
-//! `tests/cli/passwd_rotate.rs`, and that test ends with the same scan. The
-//! agent half of §12.3 arrives in Phase 4.
+//! parameters (D-040), so it runs once per phase that tests it, in
+//! `tests/cli/passwd_rotate.rs`, and that test ends with the same scan. It
+//! never goes through the agent.
 
 use std::fs::{self, File};
 use std::process::Stdio;
@@ -81,6 +85,49 @@ fn no_command_writes_a_secret_or_the_passphrase_to_disk() {
     assert_no_plaintext_under(&[sb.tmp.path()], &[&stored, &typed, PASSPHRASE]);
     // The vault is where the data went: ciphertext only.
     assert!(sb.vault_path().is_file());
+}
+
+/// The same commands through an unlocked agent (§12.3 step 2). The agent holds
+/// the key and decrypts, and its socket and lock files are in the scanned
+/// directory too. Neither the secrets nor the passphrase reach any file.
+#[test]
+fn no_command_writes_a_secret_or_the_passphrase_to_disk_through_an_agent() {
+    let sb = Sandbox::with_vault();
+    let stored = sb.secret("stored", "demo", "api", "key");
+    let typed = crate::common::marker("typed");
+    sb.register(&typed);
+    sb.unlock(&[]).ok();
+    assert!(sb.socket().exists(), "the agent is up");
+
+    sb.run_pass(&["set", "demo/api/typed"], format!("{typed}\n").as_bytes())
+        .ok();
+    let print = ["--", "sh", "-c", "echo \"$API\"; echo \"$API\" >&2"];
+    env_ref(&sb, "vault://demo/api/key", &print).ok();
+    env_ref(
+        &sb,
+        "vault://demo/api/typed",
+        &["--no-mask", "--", "sh", "-c", "echo \"$API\""],
+    )
+    .ok();
+    fs::write(sb.work.join("app.env"), "FROM_FILE=vault://demo/api/key\n").unwrap();
+    env_ref(
+        &sb,
+        "vault://demo/api/typed",
+        &["--env-file", "app.env", "--", "sh", "-c", "echo \"$FROM_FILE $API\""],
+    )
+    .ok();
+    let ran = sb.run_pass(&["inject"], b"key={{ vault://demo/api/key }}\n");
+    assert_eq!(ran.stdout_str(), format!("key={stored}\n"));
+    let ran = sb.run_pass(&["get", "demo/api/typed"], b"");
+    assert_eq!(ran.stdout_str(), typed);
+    sb.run_pass(&["list"], b"").ok();
+    sb.run_pass(&["rm", "demo/api/typed"], b"").ok();
+    sb.run_pass(&["audit", "verify"], b"").ok();
+
+    // While the agent still holds the key, and after it has let go.
+    assert_no_plaintext_under(&[sb.tmp.path()], &[&stored, &typed, PASSPHRASE]);
+    sb.run(&["agent", "stop"], b"").ok();
+    assert_no_plaintext_under(&[sb.tmp.path()], &[&stored, &typed, PASSPHRASE]);
 }
 
 /// §12.3 step 4: `inject > file` and `get > file` are refused and leave the

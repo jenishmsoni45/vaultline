@@ -627,7 +627,7 @@ None of these changes an answer above. Each fills in a detail the docs leave ope
 - **Wire error codes.** The docs give `code:u16` and a message but no values. `agent/protocol.rs` defines: 1 locked, 2 not found, 3 bad request, 4 vault or audit error, 5 too large, 6 busy. A client never shows a code to the user; it shows the message.
 - **Handshake channel.** `unlock` reads the agent's single status byte from the agent's stdout pipe (0 ready, otherwise an error code), and the agent's stderr pipe carries its error text, which `unlock` prints, since it never contains a secret.
 - **CPU-hours.** `scripts/fuzz-cpu-hours.sh` reads one `<target>.seconds` file per job, written by the job from the measured run time, and multiplies each by the runner's core count (written to a second file by the same job, since libFuzzer runs as one process). It prints the sum in CPU-hours, and each job's share.
-- **New dependency features, no new crates.** `nix` gains `socket`, `poll` and `net` (peer credentials, `poll`, `umask` and the listener's socket options) and `signal-hook` stays as it is. Each is justified in the PR.
+- **No new crate of ours, one new transitive crate.** `nix` gains the `socket`, `poll` and `net` features (peer credentials, `poll` and the socket options), and `signal-hook` stays as it is. `nix`'s `socket` feature pulls in `memoffset`, a small, widely used crate (MIT or Apache-2.0) that `nix` itself depends on. Both are justified in the PR.
 
 ### D-053 · How far the head may lag behind the log (resolves a clash between `design.md` §12.4 and `vault-format.md` §5.6)
 
@@ -661,3 +661,12 @@ None of these changes an answer above. Each fills in a detail the docs leave ope
 - **A new source file, `src/session.rs`,** holds what both paths share: check the audit log, do the work against an unlocked vault, append the records. `commands.rs` and the agent both call it, so the in-process path and the agent path can't drift apart. `architecture.md` §8 doesn't list it; the owner can have the layout updated.
 - **`Vault::create` writes the log and the head** (the `init` record) under the lock it already holds, so a vault created through the library, as the tests do, matches what `init` makes.
 - **Test agents are found by their socket.** The test harness reads the agent's process ID from the socket's peer credentials (`SO_PEERCRED` on Linux, `LOCAL_PEERPID` on macOS) and its guard waits for that process to exit. No process-ID file is written, so `architecture.md` §7 stays accurate.
+
+### D-056 · Details Claude chose while building Phase 4 (to review in the PR)
+
+- **Little-endian on the wire.** `design.md` §8.1 gives the field sizes but not the byte order. The protocol follows `vault-format.md` §1: every integer is little-endian.
+- **`audit verify` and `audit head` run on a damaged log.** D-047 makes every append check the log first, and an in-process unlock appends an `unlock` record, so without an exception those two commands could never report the damage they exist to find. They open the vault the way every command does, but if the log or head is missing or damaged the `unlock` record is skipped instead of failing the command (`session::open_inspecting`). A wrong passphrase is still counted, and any other error is still an error. Through an agent they never needed the exception.
+- **Temporary files of the head and the counter.** Both are replaced atomically with the same `.audit.head.tmp-` prefix, and both are removed by the next writer that holds the lock. The counter isn't ciphertext, but it isn't a secret either.
+- **A frame the server can't parse gets an answer.** A frame of length 0 or over 1 MiB, an unknown kind or version, or a bad flag is answered with a bad-request error (code 3) before the connection is closed, and its body is never read past the limit. A connection that stalls, or drips bytes, is closed without an answer after 5 seconds in total, not 5 seconds per read.
+- **The idle timer starts when the agent is ready.** `unlock` returns after the socket is bound, and the 15 minutes (or the chosen time) count from then.
+- **Tests find agents by their sockets.** See D-055. The test harness records the agent's process ID after `unlock` and its guard stops it again when the sandbox is dropped, then waits for the process to exit.
