@@ -222,6 +222,15 @@ enum Auth {
     Passphrase(Passphrase),
 }
 
+/// What opening the vault is for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Purpose {
+    /// Reading or changing secrets: the audit log must be in order.
+    Use,
+    /// `audit verify` and `audit head`: they must run on a damaged log too.
+    Inspect,
+}
+
 /// Looks for an unlocked agent, and otherwise asks for the passphrase
 /// (architecture §2). With an agent and `--passphrase-stdin`, the passphrase
 /// line is read and thrown away (D-054). An agent that is locked, or not there,
@@ -243,18 +252,25 @@ enum Backend {
 }
 
 impl Backend {
-    fn open(dir: &Path, auth: Auth) -> Result<Backend, CliError> {
+    fn open(dir: &Path, auth: Auth, purpose: Purpose) -> Result<Backend, CliError> {
         Ok(match auth {
             Auth::Agent => Backend::Agent(dir.to_path_buf()),
+            Auth::Passphrase(passphrase) if purpose == Purpose::Inspect => {
+                Backend::Local(session::open_inspecting(dir, &passphrase)?)
+            }
             Auth::Passphrase(passphrase) => Backend::Local(open_with(dir, &passphrase)?),
         })
     }
 
     /// Finds the directory, authenticates, and opens.
     fn connect(passphrases: &mut Passphrases) -> Result<Backend, CliError> {
+        Self::connect_for(passphrases, Purpose::Use)
+    }
+
+    fn connect_for(passphrases: &mut Passphrases, purpose: Purpose) -> Result<Backend, CliError> {
         let dir = existing_vault_dir()?;
         let auth = authenticate(passphrases)?;
-        Backend::open(&dir, auth)
+        Backend::open(&dir, auth, purpose)
     }
 
     /// Looks every reference up, all or nothing (§4.1). Either all of them
@@ -471,7 +487,7 @@ pub fn inject(passphrases: &mut Passphrases, input: Option<&Path>) -> Result<(),
             Some(auth) => auth,
             None => authenticate(passphrases)?,
         };
-        Backend::open(&dir, auth)?.resolve(&references, "nothing was written")?
+        Backend::open(&dir, auth, Purpose::Use)?.resolve(&references, "nothing was written")?
     };
     // Straight from the wiped-on-drop values to the descriptor: the output is
     // never collected in memory.
@@ -717,7 +733,7 @@ fn read_passphrase_to_end() -> Result<Passphrase, CliError> {
 pub fn audit_verify(passphrases: &mut Passphrases, expect: Option<&str>) -> Result<u8, CliError> {
     // A mistyped anchor costs no passphrase.
     let expect = expect.map(Anchor::parse).transpose()?;
-    let verdict = match Backend::connect(passphrases)? {
+    let verdict = match Backend::connect_for(passphrases, Purpose::Inspect)? {
         Backend::Local(vault) => Session::new(&vault).audit_verify(expect)?,
         Backend::Agent(dir) => client::audit_verify(&dir, expect)?,
     };
@@ -736,7 +752,7 @@ pub fn audit_verify(passphrases: &mut Passphrases, expect: Option<&str>) -> Resu
 
 /// `audit head` (US-8 AC3): prints the current anchor, `count:hash`.
 pub fn audit_head(passphrases: &mut Passphrases) -> Result<(), CliError> {
-    let anchor = match Backend::connect(passphrases)? {
+    let anchor = match Backend::connect_for(passphrases, Purpose::Inspect)? {
         Backend::Local(vault) => Session::new(&vault).audit_head()?.to_string(),
         Backend::Agent(dir) => client::audit_head(&dir)?,
     };

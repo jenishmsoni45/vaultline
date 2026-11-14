@@ -1,4 +1,5 @@
-//! P3-1 (US-1 AC2–5, and AC1 without the audit files): `vaultline init`.
+//! P3-1 (US-1 AC2–5, and AC1) and P4-1 (US-1 AC1, the audit files):
+//! `vaultline init`.
 //!
 //! The first test is the one `init` test that runs Argon2id with the default
 //! parameters, 256 MiB (D-020). Every other test fails before the key
@@ -7,6 +8,7 @@
 use std::fs::{self, Permissions};
 use std::os::unix::fs::PermissionsExt;
 
+use vaultline::audit::{Audit, Event};
 use vaultline::vault::format;
 use vaultline::vault::{KdfParams, Vault};
 
@@ -41,7 +43,24 @@ fn init_creates_a_private_vault_with_the_default_parameters() {
     // It is the directory VAULTLINE_DIR names, not the default one.
     assert!(!sb.home.join(".vaultline").exists());
     // The passphrase opens it.
-    Vault::open(&sb.dir, &pass(PASSPHRASE)).expect("the passphrase opens the new vault");
+    let vault =
+        Vault::open(&sb.dir, &pass(PASSPHRASE)).expect("the passphrase opens the new vault");
+
+    // P4-1, US-1 AC1: `audit.log` and `audit.head` exist (0600) and hold a
+    // single `init` record, which verifies.
+    assert_eq!(mode(&sb.dir.join("audit.log")), 0o600);
+    assert_eq!(mode(&sb.dir.join("audit.head")), 0o600);
+    let records = sb.audit_records();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].event, Event::Init);
+    assert_eq!((records[0].seq, records[0].detail), (0, 0));
+    assert_eq!(records[0].item_id, [0; 16], "no item, and no name");
+    let key = vault.audit_key().expect("the audit key");
+    let audit = Audit::new(&sb.dir, vault.vault_id(), &key);
+    let anchor = audit.anchor().expect("the head");
+    assert_eq!(anchor.count, 1);
+    let verdict = audit.verify(None).expect("verify");
+    assert!(verdict.passed, "{}", verdict.report);
 }
 
 /// AC5: without `VAULTLINE_DIR` the directory is `~/.vaultline`.

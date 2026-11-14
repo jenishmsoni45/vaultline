@@ -581,3 +581,6 @@ pub fn run(
     agent.finish(exit);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

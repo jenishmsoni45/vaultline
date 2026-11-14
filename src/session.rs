@@ -77,6 +77,26 @@ pub fn open(dir: &Path, passphrase: &Passphrase, origin: Origin) -> Result<Vault
     Ok(vault)
 }
 
+/// [`open`] for the commands that inspect the audit log (`audit verify` and
+/// `audit head`). They must still run when the log is missing or damaged,
+/// because that is what they are there to report, so a log that can't be
+/// appended to doesn't stop them: the unlock simply isn't recorded. A wrong
+/// passphrase is still counted, and any other failure is still an error.
+pub fn open_inspecting(dir: &Path, passphrase: &Passphrase) -> Result<Vault, Error> {
+    let vault = match Vault::open(dir, passphrase) {
+        Ok(vault) => vault,
+        Err(Error::Unlock) => {
+            let _ = audit::note_failed_unlock(dir);
+            return Err(Error::Unlock);
+        }
+        Err(e) => return Err(e),
+    };
+    match Session::new(&vault).record_unlock(Origin::Command) {
+        Ok(()) | Err(Error::Audit(AuditError::Missing(_) | AuditError::Damaged(_))) => Ok(vault),
+        Err(e) => Err(e),
+    }
+}
+
 /// An unlocked vault and the audit log that goes with it.
 pub struct Session<'v> {
     vault: &'v Vault,
