@@ -556,7 +556,7 @@ None of these change an answer above. Each fills in a detail the answers left op
 
 ## Phase 4: agent and audit log
 
-Five questions came up while reading the Phase 4 docs. The docs are silent on each, or two of them pull against each other. The owner answered all five, and the first four are D-047 to D-050. None of the answers contradicts a doc, so no doc was changed. Each one fills a gap, and `design.md` §9, §8 and §12.6 would gain a sentence if the owner wants it written there.
+Seven questions came up while reading the Phase 4 docs. The docs are silent on most of them, and in one case two docs pull against each other. The owner answered all seven (D-047 to D-051, D-053 and D-054). Only D-053 touches a doc's wording, and that doc change is waiting for the owner's approval. The others fill gaps that `design.md` §8, §9 and §12.6 could spell out in a sentence, if the owner wants that.
 
 ### D-047 · What an audit append checks, and what happens when it can't proceed (fills a gap in `design.md` §9 and §11)
 
@@ -570,7 +570,7 @@ Five questions came up while reading the Phase 4 docs. The docs are silent on ea
   - **Checks before an append,** all cheap because they read only the tail: the log is 26 + n × 105 bytes, its header is valid, the last record's `seq` is n − 1 and its `prev_hash` and MAC are valid, and the head's magic, version, `vault_id` and MAC are valid, with `count` at most n and `last_hash` equal to the hash of record `count − 1`. A head that is one record behind the log is fine (`vault-format.md` §5.4).
   - **On failure** the command fails with exit 1 and an error that names the problem and points to `vaultline audit verify`. It does that before it reads a secret or changes the vault, so nothing is read or written without a record.
   - **`audit verify`** still reports the damage and exits 1. When the log can't be appended to, it skips its own `verify` record and says so.
-  - **Cost:** a damaged log blocks every command except `audit verify`, `audit head`, `init`-time checks and the commands that don't touch the vault. That is the point: nobody gets silent access by damaging the log.
+  - **Cost:** a damaged log blocks every command that would append a record. `audit verify` and `audit head` still run, and so do the commands that never append (`init`, `passwd` with a wrong passphrase, an agent `list`). That is the point: nobody gets silent access by damaging the log.
 - **Why:** B and C leave a way to read secrets, or to hide a truncation, with no trace. This keeps S8's truncation guarantee for the commands that come after the cut, not only for `verify`.
 
 ### D-048 · The `lock` record when `rotate` locks the agent (resolves a clash between `design.md` §4, §8 and §9)
@@ -602,7 +602,7 @@ Five questions came up while reading the Phase 4 docs. The docs are silent on ea
   - B: unlock and print a note that the old timeout stays.
   - C: add a timeout field to Unlock (a protocol change).
 - **Decision:** A.
-- **Design:** With an agent running and `--idle-timeout` given, `unlock` fails with exit 1 before it asks for the passphrase, and says: run `vaultline agent stop`, then `vaultline unlock --idle-timeout D`. With no flag, a locked agent is unlocked and keeps the timeout it started with. An agent that is already unlocked prints "already unlocked" and changes nothing, whether or not the flag was given... except that the flag still produces the same refusal, so a user never believes a timeout was changed when it wasn't.
+- **Design:** With an agent running and `--idle-timeout` given, `unlock` fails with exit 1 before it asks for the passphrase, and says: run `vaultline agent stop`, then `vaultline unlock --idle-timeout D`. With no flag, a locked agent is unlocked and keeps the timeout it started with. An agent that is already unlocked prints "already unlocked" and changes nothing, unless the flag was given, in which case the same refusal applies, so nobody believes a timeout was changed when it wasn't.
 - **Why:** Nothing is silently ignored, and the protocol stays as `design.md` §8.1 fixes it.
 
 ### D-051 · How long the fuzz campaign's jobs run (amends the wording "up to 6 hours" in D-018, `design.md` §12.6 and NFR-18)
@@ -628,3 +628,36 @@ None of these changes an answer above. Each fills in a detail the docs leave ope
 - **Handshake channel.** `unlock` reads the agent's single status byte from the agent's stdout pipe (0 ready, otherwise an error code), and the agent's stderr pipe carries its error text, which `unlock` prints, since it never contains a secret.
 - **CPU-hours.** `scripts/fuzz-cpu-hours.sh` reads one `<target>.seconds` file per job, written by the job from the measured run time, and multiplies each by the runner's core count (written to a second file by the same job, since libFuzzer runs as one process). It prints the sum in CPU-hours, and each job's share.
 - **New dependency features, no new crates.** `nix` gains `socket`, `poll` and `net` (peer credentials, `poll`, `umask` and the listener's socket options) and `signal-hook` stays as it is. Each is justified in the PR.
+
+### D-053 · How far the head may lag behind the log (resolves a clash between `design.md` §12.4 and `vault-format.md` §5.6)
+
+- **Question:** §12.4 says `audit verify` must fail when the head is replaced with an older one. §5.6 check 5 only asks for head `count` ≤ n and a matching `last_hash`, so an older head with a valid MAC and `count` < n would pass.
+- **Options:**
+  - A: the head's `count` must be n or n − 1.
+  - B: keep §5.6 as it is and drop "replace the head with an older one" from §12.4.
+  - C: allow a fixed larger lag, such as 8 records.
+- **Decision:** A.
+- **Design:**
+  - **Rule:** `verify` fails unless head `count` is n or n − 1. n − 1 is the documented crash case, where a record was written and the head not yet replaced.
+  - **One head update per record:** every record is written and flushed, then the head is replaced, before the next record is written. A multi-item read therefore appends k records in k steps. This is what makes "at most one behind" true after a crash.
+  - **Append check:** the pre-append check of D-047 uses the same rule.
+- **Doc change (awaiting approval):** `vault-format.md` §5.6 check 5 becomes: "The head's `count` is n or n − 1. If it is greater than n, the log was truncated; if it is less than n − 1, the head is older than the log. Record `count − 1` hashes to `last_hash`, or the header does if `count` is 0." §5.4's "which is not an error" stays true. Until the owner approves, this entry is the rule the code follows.
+- **Why:** B would leave head rollback undetected without an anchor, and C needs an arbitrary number in a frozen-style format spec. A costs a few more flushes on a read that touches several items, which Phase 5 measures (NFR-9).
+
+### D-054 · `--passphrase-stdin` when an unlocked agent serves the command (fills a gap in D-037 and `design.md` §4)
+
+- **Question:** With `--passphrase-stdin`, the first stdin line is the passphrase and the rest is the command's input. An unlocked agent needs no passphrase. If the line isn't consumed, `run --passphrase-stdin` gives it to the child as its stdin.
+- **Options:**
+  - A: read the line and throw it away.
+  - B: ignore the agent and unlock in-process with that passphrase.
+  - C: leave stdin alone.
+- **Decision:** A.
+- **Design:** When a command goes through an unlocked agent and `--passphrase-stdin` is given, the command reads and discards the passphrase line at the point where the in-process path would have read it, and does not check it. A command that wouldn't read a passphrase in-process (a `run` or `inject` with nothing to resolve) still reads none. A locked or missing agent changes nothing: the line is the passphrase, as in Phase 3.
+- **Why:** Scripts behave the same with or without an agent, and the passphrase never reaches a child, a template or a stored value. The line isn't checked because the agent's unlocked state is the authority, and any process of the same user could ask it directly (D-013).
+
+### D-055 · More details Claude chose in Phase 4 (to review in the PR)
+
+- **`lock` and `agent stop` with no agent running** print "no agent is running" and exit 0. The goal of each, no key in memory and no agent, already holds.
+- **A new source file, `src/session.rs`,** holds what both paths share: check the audit log, do the work against an unlocked vault, append the records. `commands.rs` and the agent both call it, so the in-process path and the agent path can't drift apart. `architecture.md` §8 doesn't list it; the owner can have the layout updated.
+- **`Vault::create` writes the log and the head** (the `init` record) under the lock it already holds, so a vault created through the library, as the tests do, matches what `init` makes.
+- **Test agents are found by their socket.** The test harness reads the agent's process ID from the socket's peer credentials (`SO_PEERCRED` on Linux, `LOCAL_PEERPID` on macOS) and its guard waits for that process to exit. No process-ID file is written, so `architecture.md` §7 stays accurate.
