@@ -25,6 +25,7 @@ use format::{HEADER_PREFIX_LEN, Header, Payload, Record};
 pub use crypto::KdfParams;
 pub use format::{FormatError, MAX_VALUE_LEN, Name, NameError};
 
+use crate::audit::{Audit, AuditError};
 use crate::paths::{self, PathError};
 use crate::secret::{Key, Passphrase, SecretValue};
 
@@ -69,6 +70,8 @@ pub enum Error {
     Random,
     /// Argon2id or HKDF failed.
     Kdf,
+    /// The audit log or its head can't be used (D-047).
+    Audit(AuditError),
 }
 
 impl fmt::Display for Error {
@@ -99,6 +102,7 @@ impl fmt::Display for Error {
             } => write!(f, "couldn't {action} {}: {source}", path.display()),
             Error::Random => f.write_str("the operating system's random number generator failed"),
             Error::Kdf => f.write_str("key derivation failed"),
+            Error::Audit(e) => e.fmt(f),
         }
     }
 }
@@ -109,8 +113,15 @@ impl std::error::Error for Error {
             Error::Format(e) => Some(e),
             Error::Path(e) => Some(e),
             Error::Io { source, .. } => Some(source),
+            Error::Audit(e) => Some(e),
             _ => None,
         }
+    }
+}
+
+impl From<AuditError> for Error {
+    fn from(e: AuditError) -> Self {
+        Error::Audit(e)
     }
 }
 
@@ -391,13 +402,23 @@ pub fn passwd(dir: &Path, current: &Passphrase, new: &Passphrase) -> Result<(), 
     paths::check_dir(dir)?;
     let lock = store::lock(dir)?;
     let (old, master_key) = unlock_dir(dir, current)?;
+    rewrap(dir, &lock, &old, &master_key, new)
+}
+
+fn rewrap(
+    dir: &Path,
+    lock: &store::WriterLock,
+    old: &Verified,
+    master_key: &Key,
+    new: &Passphrase,
+) -> Result<(), Error> {
     let header = Header {
         ak_nonce: old.header.ak_nonce,
         ak_box: old.header.ak_box,
-        ..wrap_master_key(&old.header.vault_id, KdfParams::DEFAULT, new, &master_key)?
+        ..wrap_master_key(&old.header.vault_id, KdfParams::DEFAULT, new, master_key)?
     };
     let bytes = seal_file(&header, &old.records, &old.subkeys.mac)?;
-    store::replace_vault(dir, &lock, &bytes)
+    store::replace_vault(dir, lock, &bytes)
 }
 
 /// Rotates every key (§4.8, D-004, D-034): a new salt, the default Argon2id
@@ -409,6 +430,15 @@ pub fn rotate(dir: &Path, passphrase: &Passphrase) -> Result<(), Error> {
     paths::check_dir(dir)?;
     let lock = store::lock(dir)?;
     let (old, _old_master_key) = unlock_dir(dir, passphrase)?;
+    rekey(dir, &lock, &old, passphrase)
+}
+
+fn rekey(
+    dir: &Path,
+    lock: &store::WriterLock,
+    old: &Verified,
+    passphrase: &Passphrase,
+) -> Result<(), Error> {
     let decrypted = old.decrypt_all()?;
     let vault_id = old.header.vault_id;
 
@@ -441,7 +471,7 @@ pub fn rotate(dir: &Path, passphrase: &Passphrase) -> Result<(), Error> {
         });
     }
     let bytes = seal_file(&header, &records, &subkeys.mac)?;
-    store::replace_vault(dir, &lock, &bytes)
+    store::replace_vault(dir, lock, &bytes)
 }
 
 impl Vault {
@@ -475,6 +505,10 @@ impl Vault {
             ..wrap_master_key(&vault_id, kdf, passphrase, &master_key)?
         };
         let bytes = seal_file(&header, &[], &subkeys.mac)?;
+        // The log and head go first: a crash in between leaves a log without a
+        // vault, which the next `create` replaces, instead of a vault with no
+        // log, which every command would refuse to use (D-047).
+        Audit::new(dir, vault_id, &audit_key).create(&lock)?;
         store::replace_vault(dir, &lock, &bytes)?;
         Ok(Vault {
             dir: dir.to_path_buf(),
@@ -526,9 +560,36 @@ impl Vault {
         verify(&file, header, &self.master_key)
     }
 
+    /// [`passwd`] for a vault that is already open: the same master key,
+    /// wrapped again under `new`. No second Argon2id run is needed to prove
+    /// the current passphrase, because `open` already did.
+    pub fn passwd(&self, new: &Passphrase) -> Result<(), Error> {
+        paths::check_dir(&self.dir)?;
+        let lock = store::lock(&self.dir)?;
+        let old = self.load()?;
+        rewrap(&self.dir, &lock, &old, &self.master_key, new)
+    }
+
+    /// [`rotate`] for a vault that is already open. `passphrase` is the one
+    /// the new master key is wrapped under. This `Vault` holds the old master
+    /// key and can't be used afterwards.
+    pub fn rotate(&self, passphrase: &Passphrase) -> Result<(), Error> {
+        paths::check_dir(&self.dir)?;
+        let lock = store::lock(&self.dir)?;
+        let old = self.load()?;
+        rekey(&self.dir, &lock, &old, passphrase)
+    }
+
     /// Every item, decrypted, in record order.
     pub fn items(&self) -> Result<Vec<Item>, Error> {
         self.load()?.items()
+    }
+
+    /// The audit key (D-034), after re-verifying the file under the master key
+    /// held since `open`. Fails exactly when [`Vault::items`] would: a vault
+    /// that was rotated or replaced since gives an authentication error.
+    pub fn audit_key(&self) -> Result<Key, Error> {
+        Ok(self.load()?.audit_key)
     }
 
     /// Every `project/item/field` name, sorted, optionally for one project
@@ -576,6 +637,18 @@ impl Vault {
         field: &Name,
         value: &SecretValue,
     ) -> Result<(), Error> {
+        self.put(project, item, field, value).map(|_| ())
+    }
+
+    /// [`Vault::set`], returning the `item_id` of the record that was written,
+    /// which the audit log needs.
+    pub fn put(
+        &self,
+        project: &Name,
+        item: &Name,
+        field: &Name,
+        value: &SecretValue,
+    ) -> Result<[u8; ID_LEN], Error> {
         if value.len() > MAX_VALUE_LEN {
             return Err(Error::ValueTooLarge);
         }
@@ -587,7 +660,7 @@ impl Vault {
         let found = decrypted
             .iter()
             .position(|d| d.payload.project == *project && d.payload.item == *item);
-        match found {
+        let written = match found {
             Some(index) => {
                 let (Some(entry), Some(record)) =
                     (decrypted.get_mut(index), records.get_mut(index))
@@ -603,6 +676,7 @@ impl Vault {
                     seal_payload(vault_id, &record.item_id, &entry.item_key, &entry.payload)?;
                 record.payload_nonce = nonce;
                 record.payload_box = sealed;
+                record.item_id
             }
             None => {
                 let (item_id, index) = fresh_item_id(&records)?;
@@ -626,15 +700,29 @@ impl Vault {
                         payload_box,
                     },
                 );
+                item_id
             }
-        }
+        };
         let bytes = seal_file(&current.header, &records, &current.subkeys.mac)?;
-        store::replace_vault(&self.dir, &lock, &bytes)
+        store::replace_vault(&self.dir, &lock, &bytes)?;
+        Ok(written)
     }
 
     /// Removes `project/item/field`. Removing an item's last field removes
     /// the whole record (D-028).
     pub fn rm(&self, project: &Name, item: &Name, field: &Name) -> Result<Removed, Error> {
+        self.remove(project, item, field)
+            .map(|(removed, _)| removed)
+    }
+
+    /// [`Vault::rm`], also returning the `item_id` of the record the field was
+    /// in, which the audit log needs.
+    pub fn remove(
+        &self,
+        project: &Name,
+        item: &Name,
+        field: &Name,
+    ) -> Result<(Removed, [u8; ID_LEN]), Error> {
         let lock = store::lock(&self.dir)?;
         let current = self.load()?;
         let mut decrypted = current.decrypt_all()?;
@@ -648,6 +736,7 @@ impl Vault {
             return Err(Error::Auth("records and items are out of step"));
         };
         entry.payload.fields.remove(field).ok_or_else(not_found)?;
+        let item_id = record.item_id;
         let removed = if entry.payload.fields.is_empty() {
             records.remove(index);
             Removed::Item
@@ -664,7 +753,7 @@ impl Vault {
         };
         let bytes = seal_file(&current.header, &records, &current.subkeys.mac)?;
         store::replace_vault(&self.dir, &lock, &bytes)?;
-        Ok(removed)
+        Ok((removed, item_id))
     }
 }
 

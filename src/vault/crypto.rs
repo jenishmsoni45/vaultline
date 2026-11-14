@@ -20,7 +20,7 @@ use chacha20poly1305::{Tag, XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
 use hmac::{Hmac, Mac};
 use rand_core::{OsRng, RngCore};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use super::format::{FORMAT_VERSION, HEADER_PREFIX_LEN};
@@ -260,6 +260,34 @@ pub fn verify_file_mac(k_mac: &Key, body: &[u8], expected: &[u8]) -> Result<(), 
     let mut mac = hmac(k_mac)?;
     mac.update(body);
     mac.verify_slice(expected).map_err(|_| CryptoError::Mac)
+}
+
+/// HMAC-SHA-256 of `parts` joined together, under `key`: the audit record and
+/// head MACs (`docs/vault-format.md` §5.2, §5.4).
+pub fn hmac_sha256(key: &Key, parts: &[&[u8]]) -> Result<[u8; MAC_LEN], CryptoError> {
+    let mut mac = hmac(key)?;
+    for part in parts {
+        mac.update(part);
+    }
+    Ok(mac.finalize().into_bytes().into())
+}
+
+/// Checks an HMAC-SHA-256 over `parts` in constant time.
+pub fn verify_hmac_sha256(key: &Key, parts: &[&[u8]], expected: &[u8]) -> Result<(), CryptoError> {
+    let mut mac = hmac(key)?;
+    for part in parts {
+        mac.update(part);
+    }
+    mac.verify_slice(expected).map_err(|_| CryptoError::Mac)
+}
+
+/// SHA-256 of `parts` joined together: the audit hash chain (§5.2).
+pub fn sha256(parts: &[&[u8]]) -> [u8; MAC_LEN] {
+    let mut hash = Sha256::new();
+    for part in parts {
+        hash.update(part);
+    }
+    hash.finalize().into()
 }
 
 fn concat(parts: &[&[u8]]) -> Vec<u8> {
