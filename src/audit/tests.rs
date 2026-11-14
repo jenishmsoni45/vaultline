@@ -370,3 +370,78 @@ fn a_record_must_be_exactly_105_bytes() {
     assert!(Record::decode(&long).is_err());
     assert!(Record::decode(&[]).is_err());
 }
+
+// ---------------------------------------------------------------------------
+// S10: the log, head and counter parsers never panic, whatever they are given.
+
+mod no_panic {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1500))]
+
+        #[test]
+        fn a_record_decoder_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..300)) {
+            if let Ok(record) = Record::decode(&bytes) {
+                // Whatever it accepts is exactly what it was given.
+                prop_assert_eq!(record.encode(), bytes);
+            }
+        }
+
+        #[test]
+        fn a_head_decoder_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..300)) {
+            let key = Key::random().unwrap();
+            let _ = Head::decode(&bytes, &key, &[7u8; ID_LEN]);
+        }
+
+        #[test]
+        fn an_anchor_parser_never_panics_and_round_trips(text in "\\PC{0,100}") {
+            if let Ok(anchor) = Anchor::parse(&text) {
+                prop_assert_eq!(anchor.to_string(), text);
+            }
+        }
+
+        #[test]
+        fn an_anchor_parser_accepts_exactly_what_it_prints(count in any::<u64>(), hash in any::<[u8; 32]>()) {
+            let anchor = Anchor { count, hash };
+            prop_assert_eq!(Anchor::parse(&anchor.to_string()).unwrap(), anchor);
+        }
+    }
+
+    proptest! {
+        // Each case writes files and builds a key, so fewer of them.
+        #![proptest_config(ProptestConfig::with_cases(250))]
+
+        /// Any contents of the log, the head and the counter file: reading,
+        /// verifying and appending return errors or verdicts, never panic.
+        #[test]
+        fn the_log_head_and_counter_files_never_panic_the_readers(
+            log in proptest::collection::vec(any::<u8>(), 0..400),
+            head in proptest::collection::vec(any::<u8>(), 0..150),
+            counter in proptest::collection::vec(any::<u8>(), 0..20),
+            prefix_valid in any::<bool>(),
+        ) {
+            let f = Fixture::new();
+            let mut log = log;
+            if prefix_valid {
+                // A real header in front, so the parser gets past its first check.
+                let mut real = f.log()[..HEADER_LEN].to_vec();
+                real.extend_from_slice(&log);
+                log = real;
+            }
+            fs::write(f.dir().join(LOG_FILE), &log).unwrap();
+            fs::write(f.dir().join(HEAD_FILE), &head).unwrap();
+            fs::write(f.dir().join(COUNTER_FILE), &counter).unwrap();
+            fs::set_permissions(f.dir().join(COUNTER_FILE), fs::Permissions::from_mode(0o600)).unwrap();
+            let audit = f.audit();
+            let _ = audit.check();
+            let _ = audit.anchor();
+            let _ = audit.verify(None);
+            let anchor = Anchor { count: 3, hash: [1; 32] };
+            let _ = audit.verify(Some(anchor));
+            let _ = audit.append_locked(&[read(1)]);
+            let _ = read_counter(f.dir());
+        }
+    }
+}

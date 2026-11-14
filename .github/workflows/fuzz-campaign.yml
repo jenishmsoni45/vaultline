@@ -1,0 +1,333 @@
+# The fuzz campaign (docs/design.md section 12.6, D-018, D-032, D-035, D-051).
+#
+# Started by hand, and only by hand: `gh workflow run fuzz-campaign.yml`, with
+# an optional `-f duration=<seconds>`. Nothing triggers it. It can only be
+# started once this file is on the default branch, which is why it arrives in
+# Phase 4 and is run at the start of Phase 5.
+#
+# - One job per fuzz target, each with the longest timeout GitHub allows for a
+#   job, 360 minutes. A job spends most of that fuzzing; the rest is for
+#   installing the tools, building the fuzzer and uploading what it found. So
+#   the fuzzing time is capped at 20,400 seconds (5 h 40 min), and the default
+#   is the cap (D-051).
+# - Every job uploads its corpus, any crashes, and how long it really fuzzed
+#   (a file of seconds and one of cores), whether or not the fuzzer failed.
+# - The summary job adds the measured times up with scripts/fuzz-cpu-hours.sh.
+#   Nothing here states a number that a script didn't measure (D-006).
+# - Every action is pinned to a commit SHA, and the token is read-only.
+
+name: Fuzz campaign
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Seconds to fuzz each target: 1 to 20400 (5 h 40 min), which is the default"
+        required: false
+        default: "20400"
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  MAX_SECONDS: "20400"
+
+jobs:
+  vault_file:
+    name: Fuzz vault_file
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the duration
+        id: duration
+        env:
+          DURATION: ${{ inputs.duration || '20400' }}
+        run: |
+          case "$DURATION" in
+            ''|*[!0-9]*) echo "error: duration must be a whole number of seconds" >&2; exit 1 ;;
+          esac
+          if [ "$DURATION" -lt 1 ] || [ "$DURATION" -gt "$MAX_SECONDS" ]; then
+            echo "error: duration must be from 1 to $MAX_SECONDS seconds" >&2
+            exit 1
+          fi
+          echo "seconds=$DURATION" >> "$GITHUB_OUTPUT"
+
+      - name: Install nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install --locked cargo-fuzz@0.13.2
+
+      - name: Fuzz vault_file
+        env:
+          SECONDS_TO_FUZZ: ${{ steps.duration.outputs.seconds }}
+        run: |
+          mkdir -p campaign
+          start=$(date +%s)
+          set +e
+          cargo +nightly fuzz run vault_file -- -max_total_time="$SECONDS_TO_FUZZ"
+          status=$?
+          set -e
+          end=$(date +%s)
+          echo "$((end - start))" > campaign/seconds
+          nproc > campaign/cores
+          echo "$status" > campaign/exit-status
+          exit "$status"
+
+      - name: Upload the corpus
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-corpus-vault_file
+          path: fuzz/corpus/vault_file
+          if-no-files-found: warn
+
+      - name: Upload the crashes
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crashes-vault_file
+          path: fuzz/artifacts/vault_file
+          if-no-files-found: ignore
+
+      - name: Upload the measured time
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-time-vault_file
+          path: campaign
+          if-no-files-found: warn
+
+  reference:
+    name: Fuzz reference
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the duration
+        id: duration
+        env:
+          DURATION: ${{ inputs.duration || '20400' }}
+        run: |
+          case "$DURATION" in
+            ''|*[!0-9]*) echo "error: duration must be a whole number of seconds" >&2; exit 1 ;;
+          esac
+          if [ "$DURATION" -lt 1 ] || [ "$DURATION" -gt "$MAX_SECONDS" ]; then
+            echo "error: duration must be from 1 to $MAX_SECONDS seconds" >&2
+            exit 1
+          fi
+          echo "seconds=$DURATION" >> "$GITHUB_OUTPUT"
+
+      - name: Install nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install --locked cargo-fuzz@0.13.2
+
+      - name: Fuzz reference
+        env:
+          SECONDS_TO_FUZZ: ${{ steps.duration.outputs.seconds }}
+        run: |
+          mkdir -p campaign
+          start=$(date +%s)
+          set +e
+          cargo +nightly fuzz run reference -- -max_total_time="$SECONDS_TO_FUZZ"
+          status=$?
+          set -e
+          end=$(date +%s)
+          echo "$((end - start))" > campaign/seconds
+          nproc > campaign/cores
+          echo "$status" > campaign/exit-status
+          exit "$status"
+
+      - name: Upload the corpus
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-corpus-reference
+          path: fuzz/corpus/reference
+          if-no-files-found: warn
+
+      - name: Upload the crashes
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crashes-reference
+          path: fuzz/artifacts/reference
+          if-no-files-found: ignore
+
+      - name: Upload the measured time
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-time-reference
+          path: campaign
+          if-no-files-found: warn
+
+  template:
+    name: Fuzz template
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the duration
+        id: duration
+        env:
+          DURATION: ${{ inputs.duration || '20400' }}
+        run: |
+          case "$DURATION" in
+            ''|*[!0-9]*) echo "error: duration must be a whole number of seconds" >&2; exit 1 ;;
+          esac
+          if [ "$DURATION" -lt 1 ] || [ "$DURATION" -gt "$MAX_SECONDS" ]; then
+            echo "error: duration must be from 1 to $MAX_SECONDS seconds" >&2
+            exit 1
+          fi
+          echo "seconds=$DURATION" >> "$GITHUB_OUTPUT"
+
+      - name: Install nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install --locked cargo-fuzz@0.13.2
+
+      - name: Fuzz template
+        env:
+          SECONDS_TO_FUZZ: ${{ steps.duration.outputs.seconds }}
+        run: |
+          mkdir -p campaign
+          start=$(date +%s)
+          set +e
+          cargo +nightly fuzz run template -- -max_total_time="$SECONDS_TO_FUZZ"
+          status=$?
+          set -e
+          end=$(date +%s)
+          echo "$((end - start))" > campaign/seconds
+          nproc > campaign/cores
+          echo "$status" > campaign/exit-status
+          exit "$status"
+
+      - name: Upload the corpus
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-corpus-template
+          path: fuzz/corpus/template
+          if-no-files-found: warn
+
+      - name: Upload the crashes
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crashes-template
+          path: fuzz/artifacts/template
+          if-no-files-found: ignore
+
+      - name: Upload the measured time
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-time-template
+          path: campaign
+          if-no-files-found: warn
+
+  agent_message:
+    name: Fuzz agent_message
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the duration
+        id: duration
+        env:
+          DURATION: ${{ inputs.duration || '20400' }}
+        run: |
+          case "$DURATION" in
+            ''|*[!0-9]*) echo "error: duration must be a whole number of seconds" >&2; exit 1 ;;
+          esac
+          if [ "$DURATION" -lt 1 ] || [ "$DURATION" -gt "$MAX_SECONDS" ]; then
+            echo "error: duration must be from 1 to $MAX_SECONDS seconds" >&2
+            exit 1
+          fi
+          echo "seconds=$DURATION" >> "$GITHUB_OUTPUT"
+
+      - name: Install nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install --locked cargo-fuzz@0.13.2
+
+      - name: Fuzz agent_message
+        env:
+          SECONDS_TO_FUZZ: ${{ steps.duration.outputs.seconds }}
+        run: |
+          mkdir -p campaign
+          start=$(date +%s)
+          set +e
+          cargo +nightly fuzz run agent_message -- -max_total_time="$SECONDS_TO_FUZZ"
+          status=$?
+          set -e
+          end=$(date +%s)
+          echo "$((end - start))" > campaign/seconds
+          nproc > campaign/cores
+          echo "$status" > campaign/exit-status
+          exit "$status"
+
+      - name: Upload the corpus
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-corpus-agent_message
+          path: fuzz/corpus/agent_message
+          if-no-files-found: warn
+
+      - name: Upload the crashes
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-crashes-agent_message
+          path: fuzz/artifacts/agent_message
+          if-no-files-found: ignore
+
+      - name: Upload the measured time
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-time-agent_message
+          path: campaign
+          if-no-files-found: warn
+
+  summary:
+    name: CPU-hours
+    needs: [vault_file, reference, template, agent_message]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download the measured times
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: fuzz-time-*
+          path: times
+
+      - name: Add them up
+        run: sh scripts/fuzz-cpu-hours.sh times | tee -a "$GITHUB_STEP_SUMMARY"
