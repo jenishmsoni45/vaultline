@@ -185,10 +185,15 @@ fn a_connection_from_another_uid_is_refused_before_any_byte_is_read() {
         return;
     }
     let (sb, secret) = unlocked(&[]);
+    // The agent may close the connection before root's request is even sent,
+    // so a failed send is expected (and is the refusal), as is a failed read.
     const SCRIPT: &str = "import socket, sys\n\
         s = socket.socket(socket.AF_UNIX)\n\
         s.connect(sys.argv[1])\n\
-        s.sendall(b'\\x02\\x00\\x00\\x00\\x01\\x06')\n\
+        try:\n\
+        \x20   s.sendall(b'\\x02\\x00\\x00\\x00\\x01\\x06')\n\
+        except OSError:\n\
+        \x20   pass\n\
         try:\n\
         \x20   data = s.recv(100)\n\
         except OSError:\n\
