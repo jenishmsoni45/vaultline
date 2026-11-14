@@ -9,15 +9,10 @@
 //! unlocked". There is no agent until Phase 4, so what is tested here is that
 //! the current passphrase is always required; the agent half arrives with it.
 
-use std::sync::Mutex;
-
 use vaultline::vault::KdfParams;
 use vaultline::vault::format::{self, HEADER_LEN};
 
-use crate::common::cli::{Sandbox, assert_no_plaintext_under};
-
-/// Held by the two tests that use the default parameters.
-static HEAVY: Mutex<()> = Mutex::new(());
+use crate::common::cli::{HEAVY, Sandbox, assert_no_plaintext_under};
 
 const NEW_PASSPHRASE: &str = "a-new-fake-passphrase";
 
