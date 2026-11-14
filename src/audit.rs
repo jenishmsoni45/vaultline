@@ -105,6 +105,8 @@ pub enum AuditError {
     },
     /// The MAC machinery failed.
     Crypto,
+    /// A change was made, but the record of it couldn't be written.
+    Recording(Box<AuditError>),
 }
 
 impl fmt::Display for AuditError {
@@ -124,6 +126,10 @@ impl fmt::Display for AuditError {
                 source,
             } => write!(f, "couldn't {action} {}: {source}", path.display()),
             AuditError::Crypto => f.write_str("the audit MAC could not be computed"),
+            AuditError::Recording(why) => write!(
+                f,
+                "the change was made, but its audit record could not be written: {why}"
+            ),
         }
     }
 }
@@ -133,6 +139,7 @@ impl std::error::Error for AuditError {
         match self {
             AuditError::Path(e) => Some(e),
             AuditError::Io { source, .. } => Some(source),
+            AuditError::Recording(why) => Some(&**why),
             _ => None,
         }
     }

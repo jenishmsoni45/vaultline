@@ -1,8 +1,7 @@
 //! vaultline: an encrypted local vault that injects secrets into child
 //! processes and templates without writing plaintext to disk.
 //!
-//! The design lives in `docs/`. Phase 4 (the agent and the audit log) is the
-//! only part still missing: `agent` and `audit` are placeholders.
+//! The design lives in `docs/`.
 
 #![forbid(unsafe_code)]
 
@@ -17,4 +16,5 @@ pub mod inject;
 pub mod input;
 pub mod paths;
 pub mod secret;
+pub mod session;
 pub mod vault;
