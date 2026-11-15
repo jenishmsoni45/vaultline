@@ -237,7 +237,7 @@ The command needs an unlock, either directly or through the agent. It passes onl
 2. The log's length is 26 + n × 105 for some n. Anything else means a cut through the middle of a record.
 3. Every record i has `seq` = i, a `prev_hash` that matches, a valid `mac` and a known `event`.
 4. The head's magic, version and `vault_id` are valid, and its `mac` verifies.
-5. The head's `count` is at most n. If it's greater, the log was truncated. Record `count − 1` hashes to `last_hash`, or the header does if `count` is 0.
+5. The head's `count` is n or n − 1. If it is greater than n, the log was truncated; if it is less than n − 1, the head is older than the log. Record `count − 1` hashes to `last_hash`, or the header does if `count` is 0.
 6. With `--expect <c>:<h>`: c is at most n, and record c − 1 hashes to h (or the header does, if c is 0).
 
 A missing head file fails check 4. Each run appends a `verify` record with the result (D-030).

@@ -136,7 +136,7 @@ Numbers here are chosen parameters and targets. Measured results are published o
 | NFR-15 | Builds with Rust 1.86 (`rust-version`), with no `rust-toolchain.toml` (D-022). | CI pins 1.86 |
 | NFR-16 | Developing locally needs nothing beyond the Rust already on the Mac. cargo-deny, cargo-audit and cargo-fuzz run in CI (D-020, D-022). | `make` targets print a skip message locally |
 | NFR-17 | Tests leave nothing running and nothing outside their temporary directories (D-020). | agent guard in the test harness; idle-timeout exit |
-| NFR-18 | CI: the Linux job runs on every push with a 60 s fuzz smoke per target. The macOS job runs on PRs. The campaign runs four targets for up to 6 h each, started by the owner (D-018, D-032). | workflow files |
+| NFR-18 | CI: the Linux job runs on every push with a 60 s fuzz smoke per target. The macOS job runs on PRs. The campaign runs four targets for up to 5 h 40 min each, started by the owner (D-018, D-032, D-051). | workflow files |
 | NFR-19 | Every number in `README.md` or `docs/` that describes a measurement comes from a script in the repo, and names it (D-006). | review; `scripts/` |
 | NFR-20 | Every error says what failed and how to fix it, without secret values. | the stderr check in CLI tests |
 

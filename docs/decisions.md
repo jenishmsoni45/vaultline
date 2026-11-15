@@ -615,7 +615,7 @@ Seven questions came up while reading the Phase 4 docs. The docs are silent on m
 - **Decision:** A.
 - **Design:** `fuzz-campaign.yml` takes a `duration` input in seconds. The default is 20,400, and a larger value is rejected at the start of each job. Each job has `timeout-minutes: 360`. The upload steps run with `if: always()`. The CPU-hours script counts measured run time, never the requested time.
 - **Why:** The 20 minutes left cover setup, the build and the upload. B can lose the corpus and any crash files. C collects about half the CPU-hours planned.
-- **Doc wording:** `design.md` §12.6 and NFR-18 keep saying "up to 6 hours"; the real fuzzing time is 5 h 40 min at most. The owner can have that wording changed.
+- **Doc wording (changed in Phase 5, D-060):** `design.md` §12.6 and NFR-18 now say "up to 5 h 40 min".
 
 ### D-052 · Details Claude chose in Phase 4 (to review in the PR)
 
@@ -641,7 +641,7 @@ None of these changes an answer above. Each fills in a detail the docs leave ope
   - **Rule:** `verify` fails unless head `count` is n or n − 1. n − 1 is the documented crash case, where a record was written and the head not yet replaced.
   - **One head update per record:** every record is written and flushed, then the head is replaced, before the next record is written. A multi-item read therefore appends k records in k steps. This is what makes "at most one behind" true after a crash.
   - **Append check:** the pre-append check of D-047 uses the same rule.
-- **Doc change (awaiting approval):** `vault-format.md` §5.6 check 5 becomes: "The head's `count` is n or n − 1. If it is greater than n, the log was truncated; if it is less than n − 1, the head is older than the log. Record `count − 1` hashes to `last_hash`, or the header does if `count` is 0." §5.4's "which is not an error" stays true. Until the owner approves, this entry is the rule the code follows.
+- **Doc change (approved in Phase 5, D-060):** `vault-format.md` §5.6 check 5 becomes: "The head's `count` is n or n − 1. If it is greater than n, the log was truncated; if it is less than n − 1, the head is older than the log. Record `count − 1` hashes to `last_hash`, or the header does if `count` is 0." §5.4's "which is not an error" stays true.
 - **Why:** B would leave head rollback undetected without an anchor, and C needs an arbitrary number in a frozen-style format spec. A costs a few more flushes on a read that touches several items, which Phase 5 measures (NFR-9).
 
 ### D-054 · `--passphrase-stdin` when an unlocked agent serves the command (fills a gap in D-037 and `design.md` §4)
@@ -670,3 +670,47 @@ None of these changes an answer above. Each fills in a detail the docs leave ope
 - **A frame the server can't parse gets an answer.** A frame of length 0 or over 1 MiB, an unknown kind or version, or a bad flag is answered with a bad-request error (code 3) before the connection is closed, and its body is never read past the limit. A connection that stalls, or drips bytes, is closed without an answer after 5 seconds in total, not 5 seconds per read.
 - **The idle timer starts when the agent is ready.** `unlock` returns after the socket is bound, and the 15 minutes (or the chosen time) count from then.
 - **Tests find agents by their sockets.** See D-055. The test harness records the agent's process ID after `unlock` and its guard stops it again when the sandbox is dropped, then waits for the process to exit.
+
+## Phase 5: harden and ship
+
+Four questions came up while reading the Phase 5 docs. The owner answered all of them (D-057 to D-060).
+
+### D-057 · Which bug the postmortem is about (P5-5)
+
+- **Question:** `docs/postmortem.md` covers one real bug found during the build. Which one?
+- **Options:**
+  - A: D-039, where `design.md` §10 said `Zeroizing<[u8; 32]>` has no `Debug`, but it prints the raw key bytes.
+  - B: the stream setup before the child starts, and the panic on stderr (commit 2fe0bfb).
+  - C: the Lock and Stop audit failure that didn't say the key was already wiped (commit f01a51a).
+- **Decision:** A.
+- **Why:** It is the one most relevant to security, it was caught by checking a claim instead of trusting it, and the lesson (check what a trait does before writing that it doesn't) carries over.
+
+### D-058 · Which campaign run the README's fuzz numbers come from
+
+- **Question:** Two manual campaign runs exist: 43634413511 (about 18 minutes) and 43640576661 (5 h 42 min, four targets, no crashes). Which feed the README's CPU-hours and crash numbers?
+- **Options:**
+  - A: only 43640576661.
+  - B: both, summed.
+  - C: wait for another run.
+- **Decision:** A.
+- **Design:** `scripts/numbers.sh` takes the directory of artifacts downloaded from that one run (`fuzz-time-<target>` and `fuzz-crashes-<target>`), adds the CPU-hours with `scripts/fuzz-cpu-hours.sh` and counts crash files. The README names the run's ID. Crashes found and fixed are both 0, and the README says so.
+- **Why:** The first run was a short check of the workflow. One run is easy to cite and to reproduce.
+
+### D-059 · How the run-overhead bench measures overhead (NFR-9, D-031)
+
+- **Question:** D-031 says an unlocked agent lets `run` add at most 50 ms before the child starts. What is measured?
+- **Options:**
+  - A: the difference between `vaultline run -- <child>` through an unlocked agent and the same child spawned directly.
+  - B: the absolute wall time of `vaultline run -- <child>`.
+- **Decision:** A.
+- **Why:** The target is what vaultline adds. Process start-up of the child is not vaultline's.
+
+### D-060 · Which pending doc changes Phase 5 makes
+
+- **Question:** D-051, D-053 and D-055 each left a doc change waiting for approval. Which does this PR make?
+- **Options:** D-051 only, D-053 only, D-055 only, both of the first two, all three, or none.
+- **Decision:** D-051 and D-053 (the owner first ticked "none" as well as these two and, asked again, confirmed these two only).
+- **Doc changes (approved):**
+  - `design.md` §12.6 and `requirements.md` NFR-18 say "up to 5 h 40 min" where they said "up to 6 hours" (D-051).
+  - `vault-format.md` §5.6 check 5 reads as written in D-053.
+- **Left as it is:** `architecture.md` §8 does not list `src/session.rs` (D-055). The owner didn't approve that change.

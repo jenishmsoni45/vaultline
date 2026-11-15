@@ -308,7 +308,7 @@ One case passes on purpose: rolling back the log and the head together. A matchi
 |---|---|---|
 | Linux (ubuntu, Rust 1.86) | every push | fmt check, Clippy with `-D warnings`, tests including the sudo tests, cargo-deny, cargo-audit, then nightly cargo-fuzz smoke: 60 s per existing target |
 | macOS (Apple Silicon, Rust 1.86) | pull requests | fmt check, Clippy, tests including the sudo tests |
-| fuzz campaign | started by the owner (`workflow_dispatch`) | one job per target, up to 6 hours each; corpus and crashes uploaded as artifacts; a script sums CPU-hours |
+| fuzz campaign | started by the owner (`workflow_dispatch`) | one job per target, up to 5 h 40 min each (D-051); corpus and crashes uploaded as artifacts; a script sums CPU-hours |
 
 Actions are pinned by commit SHA, and workflow permissions are `contents: read`.
 
