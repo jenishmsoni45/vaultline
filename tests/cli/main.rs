@@ -6,6 +6,7 @@ mod common;
 
 mod agent;
 mod audit;
+mod docs;
 mod hardening;
 mod init;
 mod inject;
@@ -17,5 +18,6 @@ mod passwd_rotate;
 mod run;
 mod run_signals;
 mod scaffold;
+mod scripts;
 mod set_get;
 mod workflows;

@@ -206,7 +206,7 @@ blob     = len:u32 bytes                            ; values, at most 64 KiB; pa
   - on Linux, calls `prctl(PR_SET_DUMPABLE, 0)`.
 
   Both go through `nix` and affect only vaultline's own processes.
-- **Secret types:** secrets are held in the wrapper types in `src/secret.rs`, which keep them in `secrecy` and `zeroize` types (`SecretBox`, `Zeroizing`) and wipe them on drop. Those library types do implement `Debug` (secrecy's prints `[REDACTED]`, and `Zeroizing<[u8; 32]>` prints the bytes), so they are only ever used inside the wrappers. The wrappers, and every type that holds one, implement neither Debug nor Display, and `static_assertions` checks that in tests (D-039).
+- **Secret types:** secrets are held in the wrapper types in `src/secret.rs`, which keep them in `secrecy` and `zeroize` types (`SecretBox`, `Zeroizing`) and wipe them on drop. Those library types do implement `Debug`. The pinned versions print no secret (secrecy's prints `[REDACTED]`, and `Zeroizing`'s prints `Zeroizing { .. }`, which `adversarial/secret_types.rs` checks), but a later release could change that, so they are only ever used inside the wrappers. The wrappers, and every type that holds one, implement neither Debug nor Display, and `static_assertions` checks that in tests (D-039, D-061).
 - **Panics** unwind (the default), so wipe-on-drop still runs. No panic message formats a secret, and none can, since the types don't implement Debug or Display.
 - **Parser modules** deny `clippy::unwrap_used`, `expect_used`, `indexing_slicing`, `panic` and `arithmetic_side_effects`. The parser modules are `vault/format.rs`, `inject/{reference,envfile,template}.rs`, `agent/protocol.rs` and `audit.rs`.
 - **Error messages** never contain values or passphrases. Every CLI test asserts that the fake secret values don't appear in stderr.
@@ -308,7 +308,7 @@ One case passes on purpose: rolling back the log and the head together. A matchi
 |---|---|---|
 | Linux (ubuntu, Rust 1.86) | every push | fmt check, Clippy with `-D warnings`, tests including the sudo tests, cargo-deny, cargo-audit, then nightly cargo-fuzz smoke: 60 s per existing target |
 | macOS (Apple Silicon, Rust 1.86) | pull requests | fmt check, Clippy, tests including the sudo tests |
-| fuzz campaign | started by the owner (`workflow_dispatch`) | one job per target, up to 6 hours each; corpus and crashes uploaded as artifacts; a script sums CPU-hours |
+| fuzz campaign | started by the owner (`workflow_dispatch`) | one job per target, up to 5 h 40 min each (D-051); corpus and crashes uploaded as artifacts; a script sums CPU-hours |
 
 Actions are pinned by commit SHA, and workflow permissions are `contents: read`.
 
