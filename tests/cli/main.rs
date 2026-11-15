@@ -6,6 +6,7 @@ mod common;
 
 mod agent;
 mod audit;
+mod docs;
 mod hardening;
 mod init;
 mod inject;
