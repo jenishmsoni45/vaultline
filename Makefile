@@ -54,7 +54,11 @@ fuzz:
 	done
 
 # Runs only when asked for. Prints the measured unlock time with the default
-# Argon2id parameters (P2-15); one process, 256 MiB, about ten seconds once
-# built. The run-overhead benchmark arrives in Phase 5.
+# Argon2id parameters (P2-15; one process, 256 MiB, about ten seconds once
+# built), then the overhead `run` adds with an unlocked agent (P5-2; starts one
+# agent in a temporary directory and stops it again, about half a minute). The
+# second script exits 2 if the overhead is above its 50 ms target, so the
+# target can't be missed silently.
 bench:
 	sh scripts/bench-unlock.sh
+	sh scripts/bench-run-overhead.sh

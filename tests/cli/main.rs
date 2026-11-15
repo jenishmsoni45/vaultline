@@ -17,5 +17,6 @@ mod passwd_rotate;
 mod run;
 mod run_signals;
 mod scaffold;
+mod scripts;
 mod set_get;
 mod workflows;
