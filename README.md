@@ -96,8 +96,8 @@ Every measured number in this repository comes from a script in [`scripts/`](scr
 
 | What | Result | Produced by |
 |---|---|---|
-| Unlock time, default Argon2id parameters, on the developer Mac | 305.78 ms (criterion's mean estimate) | `scripts/bench-unlock.sh` |
-| Overhead of `run` with an unlocked agent, on the developer Mac | 18.63 ms (the run through the agent minus spawning the same child directly) | `scripts/bench-run-overhead.sh` |
+| Unlock time, default Argon2id parameters, on the developer Mac | 302.08 ms (criterion's mean estimate) | `scripts/bench-unlock.sh` |
+| Overhead of `run` with an unlocked agent, on the developer Mac | 17.42 ms (the run through the agent minus spawning the same child directly) | `scripts/bench-run-overhead.sh` |
 | Fuzz campaign CPU-hours, from run 43640576661 of the `fuzz-campaign` workflow | 45.53 CPU-hours across 4 targets (measured run time times the cores the runner offered, so an upper bound) | `scripts/fuzz-cpu-hours.sh` |
 | Fuzz crashes found by that run | 0 found, so 0 to fix; all 4 targets finished without a crash | `scripts/fuzz-crashes.sh` |
 | Tests, on the developer Mac | 469 passed, 0 failed, 0 ignored (the tests that need `sudo` or Linux are skipped here and run in CI) | `scripts/count-tests.sh` |

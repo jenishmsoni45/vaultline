@@ -36,14 +36,17 @@ usage() {
 }
 
 [ "$#" -eq 2 ] || usage
-cleanup=""
+# Everything this script writes goes into one temporary directory of its own,
+# removed on exit. It never writes into, or removes anything from, the
+# directory given with --campaign.
+workdir=$(mktemp -d)
+trap 'rm -rf "$workdir"' EXIT
 case "$1" in
     --run)
         case "$2" in '' | *[!0-9]*) usage ;; esac
         run_id=$2
-        campaign=$(mktemp -d)
-        cleanup=$campaign
-        trap 'rm -rf "$cleanup"' EXIT
+        campaign=$workdir/campaign
+        mkdir "$campaign"
         gh run download "$run_id" --dir "$campaign" >&2
         ;;
     --campaign)
@@ -78,9 +81,8 @@ overhead=$(printf '%s\n' "$overhead_out" | sed -n 's/^Overhead added by vaultlin
 # 3. Fuzzing. The CPU-hours come from fuzz-cpu-hours.sh, which only reads
 #    `seconds` and `cores`; the targets, clean exits and crash files come from
 #    fuzz-crashes.sh.
-times="$campaign/times"
-rm -rf "$times"
-mkdir -p "$times"
+times=$workdir/times
+mkdir "$times"
 for dir in "$campaign"/fuzz-time-*/; do
     [ -d "$dir" ] || continue
     target=$(basename "$dir")
