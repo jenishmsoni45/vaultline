@@ -484,6 +484,7 @@ None of these change an answer above. Each fills in a detail the answers left op
 - **Decision:** A.
 - **Design:** `Key`, `Passphrase`, `SecretValue` and `SecretBytes` in `src/secret.rs` hold the library types and implement neither trait. So do the types that hold them (`Vault`, `Item`, `Payload`, `Subkeys`). `tests/adversarial/secret_types.rs` checks every one with `static_assertions`.
 - **Doc change (approved):** the "Secret types" bullet in `design.md` §10.
+- **Correction (D-061):** the claim that `Zeroizing<[u8; 32]>` prints the raw bytes is wrong for the pinned `zeroize` 1.9.1, which prints `Zeroizing { .. }`. The decision stands.
 
 ### D-040 · Tests that run Argon2id at the default parameters (amends D-020)
 
@@ -679,7 +680,7 @@ Four questions came up while reading the Phase 5 docs. The owner answered all of
 
 - **Question:** `docs/postmortem.md` covers one real bug found during the build. Which one?
 - **Options:**
-  - A: D-039, where `design.md` §10 said `Zeroizing<[u8; 32]>` has no `Debug`, but it prints the raw key bytes.
+  - A: D-039, where `design.md` §10 said the library secret types have no `Debug`. They do; the correction then said `Zeroizing<[u8; 32]>` prints the raw bytes, which the pinned version doesn't (D-061).
   - B: the stream setup before the child starts, and the panic on stderr (commit 2fe0bfb).
   - C: the Lock and Stop audit failure that didn't say the key was already wiped (commit f01a51a).
 - **Decision:** A.
@@ -714,3 +715,15 @@ Four questions came up while reading the Phase 5 docs. The owner answered all of
   - `design.md` §12.6 and `requirements.md` NFR-18 say "up to 5 h 40 min" where they said "up to 6 hours" (D-051).
   - `vault-format.md` §5.6 check 5 reads as written in D-053.
 - **Left as it is:** `architecture.md` §8 does not list `src/session.rs` (D-055). The owner didn't approve that change.
+
+### D-061 · The D-039 claim about `Zeroizing` was wrong (a surprise in Phase 5)
+
+- **Question:** While writing the postmortem on D-039, Claude read the pinned `zeroize` 1.9.1. Its `Debug` for `Zeroizing<Z>` prints `Zeroizing { .. }` and not the bytes (`src/lib.rs:601`), so the correction in D-039, `design.md` §10 and `src/secret.rs` was itself wrong. `Cargo.lock` has pinned 1.9.1 since the vault library was added, so no version change explains it. What now?
+- **Options:**
+  - A: write the postmortem on this two-step error, fix the sentence in `design.md` §10 and the comment in `src/secret.rs`, and add a test for what the pinned crates print.
+  - B: keep D-039's wording and pick another bug for the postmortem.
+  - C: fix the docs, and write the postmortem on another bug.
+- **Decision:** A, approved by the owner.
+- **Design:** No behaviour changes. The wrappers still implement neither `Debug` nor `Display` (NFR-3). A new test in `tests/adversarial/secret_types.rs` formats a `SecretBox<[u8; 32]>` and a `Zeroizing<[u8; 32]>` holding a known pattern and fails if the output contains it.
+- **Doc change (approved):** the "Secret types" bullet in `design.md` §10 now says the pinned versions print no secret and a later release could change that.
+- **Why:** The rule the code enforces never depended on the claim, so nothing leaked. But a doc that states something about a dependency should be checked against it, and the postmortem is the place to say so.

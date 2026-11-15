@@ -3,8 +3,10 @@
 //! Every type here wipes its memory when dropped and implements neither
 //! `Debug` nor `Display`, so a secret can't end up in an error message, a panic
 //! message or a log line. The `secrecy` and `zeroize` types used inside them do
-//! implement `Debug` (secrecy's prints `[REDACTED]`, and `Zeroizing<[u8; 32]>`
-//! prints the bytes), so they never appear on their own in a public signature.
+//! implement `Debug`. The pinned versions print no secret (secrecy's prints
+//! `[REDACTED]`, and `Zeroizing`'s prints `Zeroizing { .. }`), but a later
+//! release could change that, so they never appear on their own in a public
+//! signature (D-061).
 //! `tests/adversarial/secret_types.rs` checks all of this with static
 //! assertions.
 //!

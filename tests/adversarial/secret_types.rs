@@ -29,3 +29,30 @@ fn secret_types_have_no_debug_or_display() {
     // The assertions above are checked when this file compiles; this test
     // makes the check show up in the test list.
 }
+
+/// D-061: the library types inside the wrappers do implement `Debug`. The
+/// pinned versions print no secret; if an update changes that, this fails
+/// before `design.md` §10 becomes wrong again. vaultline never formats these
+/// types, and the wrappers around them can't be formatted at all.
+#[test]
+fn the_library_types_inside_the_wrappers_print_no_secret() {
+    use secrecy::SecretBox;
+    use zeroize::Zeroizing;
+
+    // 0xA5 is 165 in decimal and `a5` in hex: both would show in a byte dump.
+    let boxed = SecretBox::new(Box::new([0xA5u8; 32]));
+    let zeroizing = Zeroizing::new([0xA5u8; 32]);
+    for printed in [
+        format!("{boxed:?}"),
+        format!("{boxed:#?}"),
+        format!("{zeroizing:?}"),
+        format!("{zeroizing:#?}"),
+    ] {
+        let lower = printed.to_lowercase();
+        assert!(
+            !lower.contains("165") && !lower.contains("a5") && !lower.contains("0xa5"),
+            "a library secret type printed its bytes: {printed}"
+        );
+    }
+    assert!(format!("{boxed:?}").contains("[REDACTED]"));
+}
